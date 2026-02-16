@@ -24,7 +24,18 @@ parser.add_argument("--num_envs", type=int, default=None, help="Number of enviro
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy training iterations.")
-parser.add_argument("--registry_name", type=str, required=True, help="The name of the wand registry.")
+parser.add_argument(
+    "--motion_file",
+    type=str,
+    default=None,
+    help="Path to a local motion NPZ file. If provided, overrides --registry_name.",
+)
+parser.add_argument(
+    "--registry_name",
+    type=str,
+    default=None,
+    help="The name of the wandb registry artifact. Required if --motion_file is not provided.",
+)
 
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -88,17 +99,23 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env_cfg.seed = agent_cfg.seed
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
 
-    # load the motion file from the wandb registry
-    registry_name = args_cli.registry_name
-    if ":" not in registry_name:  # Check if the registry name includes alias, if not, append ":latest"
-        registry_name += ":latest"
+    # load the motion file: either from local path or from wandb registry
     import pathlib
 
-    import wandb
+    registry_name = None
+    if args_cli.motion_file is not None:
+        env_cfg.commands.motion.motion_file = str(pathlib.Path(args_cli.motion_file).resolve())
+    elif args_cli.registry_name is not None:
+        import wandb
 
-    api = wandb.Api()
-    artifact = api.artifact(registry_name)
-    env_cfg.commands.motion.motion_file = str(pathlib.Path(artifact.download()) / "motion.npz")
+        registry_name = args_cli.registry_name
+        if ":" not in registry_name:
+            registry_name += ":latest"
+        api = wandb.Api()
+        artifact = api.artifact(registry_name)
+        env_cfg.commands.motion.motion_file = str(pathlib.Path(artifact.download()) / "motion.npz")
+    else:
+        raise ValueError("Either --motion_file or --registry_name must be provided.")
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
@@ -148,8 +165,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
-    dump_pickle(os.path.join(log_dir, "params", "env.pkl"), env_cfg)
-    dump_pickle(os.path.join(log_dir, "params", "agent.pkl"), agent_cfg)
 
     # run training
     runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
