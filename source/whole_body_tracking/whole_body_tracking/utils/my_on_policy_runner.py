@@ -9,6 +9,15 @@ import wandb
 from whole_body_tracking.utils.exporter import attach_onnx_metadata, export_motion_policy_as_onnx
 
 
+def _get_obs_normalizer(policy):
+    """Get observation normalizer from policy (ActorCritic or similar)."""
+    if hasattr(policy, "actor_obs_normalizer"):
+        return policy.actor_obs_normalizer
+    if hasattr(policy, "student_obs_normalizer"):
+        return policy.student_obs_normalizer
+    return None
+
+
 class MyOnPolicyRunner(OnPolicyRunner):
     def save(self, path: str, infos=None):
         """Save the model and training information."""
@@ -16,7 +25,8 @@ class MyOnPolicyRunner(OnPolicyRunner):
         if self.logger_type in ["wandb"]:
             policy_path = path.split("model")[0]
             filename = policy_path.split("/")[-2] + ".onnx"
-            export_policy_as_onnx(self.alg.policy, normalizer=self.obs_normalizer, path=policy_path, filename=filename)
+            normalizer = _get_obs_normalizer(self.alg.policy)
+            export_policy_as_onnx(self.alg.policy, normalizer=normalizer, path=policy_path, filename=filename)
             attach_onnx_metadata(self.env.unwrapped, wandb.run.name, path=policy_path, filename=filename)
             wandb.save(policy_path + filename, base_path=os.path.dirname(policy_path))
 
@@ -34,8 +44,9 @@ class MotionOnPolicyRunner(OnPolicyRunner):
         if self.logger_type in ["wandb"]:
             policy_path = path.split("model")[0]
             filename = policy_path.split("/")[-2] + ".onnx"
+            normalizer = _get_obs_normalizer(self.alg.policy)
             export_motion_policy_as_onnx(
-                self.env.unwrapped, self.alg.policy, normalizer=self.obs_normalizer, path=policy_path, filename=filename
+                self.env.unwrapped, self.alg.policy, normalizer=normalizer, path=policy_path, filename=filename
             )
             attach_onnx_metadata(self.env.unwrapped, wandb.run.name, path=policy_path, filename=filename)
             wandb.save(policy_path + filename, base_path=os.path.dirname(policy_path))
