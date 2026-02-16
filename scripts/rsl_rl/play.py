@@ -58,8 +58,9 @@ from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 # Import extensions to set up environment tasks
-import whole_body_tracking.tasks  # noqa: F401
+import whole_body_tracking.tasks  # noqa: F401 
 from whole_body_tracking.utils.exporter import attach_onnx_metadata, export_motion_policy_as_onnx
+from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit
 
 
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
@@ -110,6 +111,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
 
+        if args_cli.motion_file is not None:
+            print(f"[INFO]: Using motion file from CLI: {args_cli.motion_file}")
+            env_cfg.commands.motion.motion_file = args_cli.motion_file
+
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
@@ -141,19 +146,47 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # obtain the trained policy for inference
     policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
 
+    # extract the neural network module
+    # we do this in a try-except to maintain backwards compatibility.
+    try:
+        # version 2.3 onwards
+        policy_nn = ppo_runner.alg.policy
+    except AttributeError:
+        # version 2.2 and below
+        policy_nn = ppo_runner.alg.actor_critic
+
+    # extract the normalizer
+    if hasattr(policy_nn, "actor_obs_normalizer"):
+        normalizer = policy_nn.actor_obs_normalizer
+    elif hasattr(policy_nn, "student_obs_normalizer"):
+        normalizer = policy_nn.student_obs_normalizer
+    elif hasattr(ppo_runner, "obs_normalizer"):     # compatibility for older versions
+        normalizer = ppo_runner.obs_normalizer
+    else:
+        normalizer = None
+    
+    run_name = os.path.basename(log_dir)
+
     # export policy to onnx/jit
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
 
+    export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_model_dir,
+                         filename=f"{agent_cfg.experiment_name}_{run_name}.pt")
+
+    # Use the resolved normalizer (if any) for motion-policy export as well.
+    # Older versions of RSL-RL don't expose `obs_normalizer` on the runner.
     export_motion_policy_as_onnx(
         env.unwrapped,
         ppo_runner.alg.policy,
-        normalizer=ppo_runner.obs_normalizer,
+        normalizer=normalizer,
         path=export_model_dir,
         filename="policy.onnx",
     )
     attach_onnx_metadata(env.unwrapped, args_cli.wandb_path if args_cli.wandb_path else "none", export_model_dir)
-    # reset environment
-    obs, _ = env.get_observations()
+    # reset environment / get initial observations
+    # RslRlVecEnvWrapper.get_observations already returns a TensorDict with batch dimension [num_envs].
+    # Do not unpack it, since the policy expects the full observation TensorDict.
+    obs = env.get_observations()
     timestep = 0
     # simulate environment
     while simulation_app.is_running():
