@@ -111,6 +111,8 @@ python scripts/rsl_rl/train.py --task=Tracking-Flat-G1-v0 \
 --headless --logger wandb --log_project_name {project_name} --run_name {run_name}
 ```
 
+Add `--max_iterations N` to override the number of PPO iterations (default is set in the task agent config, e.g. `G1FlatPPORunnerCfg` in `source/whole_body_tracking/.../g1/agents/rsl_rl_ppo_cfg.py`). For batch CSV→train, use `MAX_ITERATIONS` or `--max-iterations` on [`scripts/batch_csv_train.sh`](scripts/batch_csv_train.sh); see [README_DOCKER.md](README_DOCKER.md).
+
 ### Policy Evaluation
 
 - Play the trained policy by the following command:

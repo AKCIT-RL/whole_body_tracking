@@ -115,6 +115,56 @@ export WANDB_ENTITY=your-organization
 docker compose run --rm whole-body-tracking python scripts/rsl_rl/train.py --task=Tracking-Flat-G1-v0 --registry_name org/motions/motion --headless
 ```
 
+## Batch pipeline (multiple CSVs → registry → train)
+
+[`scripts/batch_csv_train.sh`](scripts/batch_csv_train.sh) runs in two phases: first **all** `*.csv` in a directory through `csv_to_npz.py` (W&B motions registry), then **all** corresponding `train.py` runs in the same order, each with its own `--experiment_name` and `--run_name` (CSV basename without `.csv`).
+
+**Prerequisites:** `wandb login` and `export WANDB_ENTITY=your-organization` (see [Weights & Biases](#weights--biases)).
+
+**Environment variables (optional):** `INPUT_FPS` (default `30`), `TASK` (default `Tracking-Flat-G1-v0`), `LOG_PROJECT`, `NUM_ENVS`, `MAX_ITERATIONS`, `TRAIN_EXTRA_ARGS` (space-separated extra flags for `train.py`), `CSV_DIR` if you do not pass a directory on the command line. The batch script uses `/isaac-sim/python.sh` when present (Isaac Lab image); override with `PYTHON=/path/to/python` if needed.
+
+**Training length (`max_iterations`):** The default comes from the task agent config (e.g. `G1FlatPPORunnerCfg.max_iterations` in the source tree). Override per run in either way:
+
+- **Batch script:** `--max-iterations N` CLI flag, or `export MAX_ITERATIONS=N` (passed through as `train.py --max_iterations N` in phase 2 only).
+- **Direct `train.py`:** `--max_iterations N` (see [`scripts/rsl_rl/train.py`](scripts/rsl_rl/train.py)).
+
+Mount a host folder of CSVs into the container (example: read-only under `/workspace/motions`):
+
+```bash
+docker compose run --rm \
+  -e WANDB_ENTITY=your-organization \
+  -v /path/on/host/motions:/workspace/motions:ro \
+  whole-body-tracking \
+  ./scripts/batch_csv_train.sh /workspace/motions
+```
+
+With a training iteration cap (pick one):
+
+```bash
+# Via environment
+docker compose run --rm \
+  -e WANDB_ENTITY=your-organization \
+  -e MAX_ITERATIONS=10000 \
+  -v /path/on/host/motions:/workspace/motions:ro \
+  whole-body-tracking \
+  ./scripts/batch_csv_train.sh /workspace/motions
+```
+
+```bash
+# Via batch script flag (overrides MAX_ITERATIONS for that run if both are set)
+docker compose run --rm \
+  -e WANDB_ENTITY=your-organization \
+  -v /path/on/host/motions:/workspace/motions:ro \
+  whole-body-tracking \
+  ./scripts/batch_csv_train.sh --max-iterations 10000 /workspace/motions
+```
+
+The image `ENTRYPOINT` is already `/bin/bash`, so do **not** prefix the command with `bash` (e.g. `bash -lc '...'` becomes `/bin/bash bash -lc '...'` and Bash tries to run the `bash` binary as a script, which yields `cannot execute binary file`).
+
+If you omit the directory argument, the script uses `./motions` under the repo root inside the container.
+
+**Batch CLI flags (optional):** `--max-iterations N`, `--num-envs N`, `--task NAME`, `--log-project NAME`, `--input-fps N`, `-h` / `--help`. Any single remaining argument is `CSV_DIR` (same as the first positional before).
+
 ## EULA
 
 By running this container you agree to the [NVIDIA Software License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement).
@@ -123,4 +173,8 @@ By running this container you agree to the [NVIDIA Software License Agreement](h
 
 - **GPU errors:** Ensure the NVIDIA Container Toolkit is installed and `nvidia-smi` works on the host.
 - **NGC login errors:** Confirm `docker login nvcr.io` completed successfully.
+- **`/usr/bin/bash: cannot execute binary file`:** You likely ran `bash -lc '...'` after the service name. Use `-e WANDB_ENTITY=...` and pass `./scripts/batch_csv_train.sh ...` directly (see [Batch pipeline](#batch-pipeline-multiple-csvs--registry--train)), or use `-c '...'` as the only extra args to Bash (not `bash -c`).
+- **`python: command not found` in `batch_csv_train.sh`:** The image often has no `python` on `PATH` in non-interactive runs. The script selects `/isaac-sim/python.sh` automatically; upgrade to the latest `scripts/batch_csv_train.sh` from this repo or set `PYTHON=/isaac-sim/python.sh` if you run commands manually.
+- **Volume mount:** Keep `:ro` on the same line as `-v host/path:/container/path:ro`. A line break between the path and `:ro` can break the command. Use a bind mount to a real host directory (e.g. `/home/you/motions`) if you need your CSV files from disk; a named volume `motions:` starts empty unless you populate it another way.
+- **`csv_to_npz` hangs after W&B:** The script skips `sim.stop()` by default (it often blocks in headless Docker). Teardown still runs `clear_all_callbacks`, `SimulationContext.clear_instance()`, then `simulation_app.close()`. To force `sim.stop()`, set `CSV_TO_NPZ_CALL_SIM_STOP=1`.
 - **Inaccessible `/tmp`:** If the container cannot use `/tmp`, edit `scripts/csv_to_npz.py` around lines 319 and 326 to use another temporary directory.
