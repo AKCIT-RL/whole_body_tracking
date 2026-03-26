@@ -10,6 +10,7 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import os
 import numpy as np
 
 from isaaclab.app import AppLauncher
@@ -215,8 +216,46 @@ class MotionLoader:
         return state, reset_flag
 
 
-def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene, joint_names: list[str]):
-    """Runs the simulation loop."""
+def _teardown_simulation_after_csv_export(sim: SimulationContext | None, scene: InteractiveScene | None) -> None:
+    """Tear down scene/sim before ``simulation_app.close()`` (full Kit shutdown).
+
+    Skips ``sim.stop()`` by default: in Docker/headless it often **hangs indefinitely** after ``sim.reset()``
+    (see Isaac Lab / Omniverse shutdown issues). Full process exit still happens via
+    ``clear_all_callbacks`` + ``SimulationContext.clear_instance()`` + ``simulation_app.close()`` in ``__main__``.
+
+    Set env ``CSV_TO_NPZ_CALL_SIM_STOP=1`` to opt into ``sim.stop()`` (e.g. local GUI debugging).
+    """
+    if scene is not None:
+        try:
+            del scene
+        except Exception as exc:
+            print(f"[WARN]: csv_to_npz scene teardown: {exc}")
+    if sim is None:
+        return
+    call_sim_stop = os.environ.get("CSV_TO_NPZ_CALL_SIM_STOP", "").lower() in ("1", "true", "yes")
+    if call_sim_stop:
+        try:
+            try:
+                headless = not sim.has_gui()
+            except Exception:
+                headless = True
+            if headless and hasattr(sim, "stop"):
+                sim.stop()
+        except Exception as exc:
+            print(f"[WARN]: csv_to_npz sim.stop: {exc}")
+    try:
+        if hasattr(sim, "clear_all_callbacks"):
+            sim.clear_all_callbacks()
+    except Exception as exc:
+        print(f"[WARN]: csv_to_npz clear_all_callbacks: {exc}")
+    try:
+        SimulationContext.clear_instance()
+    except Exception as exc:
+        print(f"[WARN]: csv_to_npz SimulationContext.clear_instance: {exc}")
+
+
+def run_simulator(sim: SimulationContext, scene: InteractiveScene, joint_names: list[str]) -> bool:
+    """Runs the simulation loop. Returns True if motion was exported and uploaded to W&B."""
     # Load motion
     motion = MotionLoader(
         motion_file=args_cli.input_file,
@@ -309,61 +348,64 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene, joi
             logged_artifact = run.log_artifact(artifact_or_path="/tmp/motion.npz", name=COLLECTION, type=REGISTRY)
             run.link_artifact(artifact=logged_artifact, target_path=f"wandb-registry-{REGISTRY}/{COLLECTION}")
             print(f"[INFO]: Motion saved to wandb registry: {REGISTRY}/{COLLECTION}")
+            wandb.finish()
+            return True
+    return False
 
 
 def main():
     """Main function."""
-    # Load kit helper
-    sim_cfg = sim_utils.SimulationCfg(device=args_cli.device)
-    sim_cfg.dt = 1.0 / args_cli.output_fps
-    sim = SimulationContext(sim_cfg)
-    # Design scene
-    scene_cfg = ReplayMotionsSceneCfg(num_envs=1, env_spacing=2.0)
-    scene = InteractiveScene(scene_cfg)
-    # Play the simulator
-    sim.reset()
-    # Now we are ready!
-    print("[INFO]: Setup complete...")
-    # Run the simulator
-    run_simulator(
-        sim,
-        scene,
-        joint_names=[
-            "left_hip_pitch_joint",
-            "left_hip_roll_joint",
-            "left_hip_yaw_joint",
-            "left_knee_joint",
-            "left_ankle_pitch_joint",
-            "left_ankle_roll_joint",
-            "right_hip_pitch_joint",
-            "right_hip_roll_joint",
-            "right_hip_yaw_joint",
-            "right_knee_joint",
-            "right_ankle_pitch_joint",
-            "right_ankle_roll_joint",
-            "waist_yaw_joint",
-            "waist_roll_joint",
-            "waist_pitch_joint",
-            "left_shoulder_pitch_joint",
-            "left_shoulder_roll_joint",
-            "left_shoulder_yaw_joint",
-            "left_elbow_joint",
-            "left_wrist_roll_joint",
-            "left_wrist_pitch_joint",
-            "left_wrist_yaw_joint",
-            "right_shoulder_pitch_joint",
-            "right_shoulder_roll_joint",
-            "right_shoulder_yaw_joint",
-            "right_elbow_joint",
-            "right_wrist_roll_joint",
-            "right_wrist_pitch_joint",
-            "right_wrist_yaw_joint",
-        ],
-    )
+    sim: SimulationContext | None = None
+    scene: InteractiveScene | None = None
+    try:
+        sim_cfg = sim_utils.SimulationCfg(device=args_cli.device)
+        sim_cfg.dt = 1.0 / args_cli.output_fps
+        sim = SimulationContext(sim_cfg)
+        scene_cfg = ReplayMotionsSceneCfg(num_envs=1, env_spacing=2.0)
+        scene = InteractiveScene(scene_cfg)
+        sim.reset()
+        print("[INFO]: Setup complete...")
+        run_simulator(
+            sim,
+            scene,
+            joint_names=[
+                "left_hip_pitch_joint",
+                "left_hip_roll_joint",
+                "left_hip_yaw_joint",
+                "left_knee_joint",
+                "left_ankle_pitch_joint",
+                "left_ankle_roll_joint",
+                "right_hip_pitch_joint",
+                "right_hip_roll_joint",
+                "right_hip_yaw_joint",
+                "right_knee_joint",
+                "right_ankle_pitch_joint",
+                "right_ankle_roll_joint",
+                "waist_yaw_joint",
+                "waist_roll_joint",
+                "waist_pitch_joint",
+                "left_shoulder_pitch_joint",
+                "left_shoulder_roll_joint",
+                "left_shoulder_yaw_joint",
+                "left_elbow_joint",
+                "left_wrist_roll_joint",
+                "left_wrist_pitch_joint",
+                "left_wrist_yaw_joint",
+                "right_shoulder_pitch_joint",
+                "right_shoulder_roll_joint",
+                "right_shoulder_yaw_joint",
+                "right_elbow_joint",
+                "right_wrist_roll_joint",
+                "right_wrist_pitch_joint",
+                "right_wrist_yaw_joint",
+            ],
+        )
+    finally:
+        _teardown_simulation_after_csv_export(sim, scene)
+        sim = None
+        scene = None
 
 
 if __name__ == "__main__":
-    # run the main function
     main()
-    # close sim app
     simulation_app.close()
