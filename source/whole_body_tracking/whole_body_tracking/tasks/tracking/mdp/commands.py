@@ -245,6 +245,9 @@ class MotionCommand(CommandTerm):
             return
         self._adaptive_sampling(env_ids)
 
+        if self.cfg.play:
+            self.time_steps[env_ids] = 0
+
         root_pos = self.body_pos_w[:, 0].clone()
         root_ori = self.body_quat_w[:, 0].clone()
         root_lin_vel = self.body_lin_vel_w[:, 0].clone()
@@ -278,8 +281,12 @@ class MotionCommand(CommandTerm):
 
     def _update_command(self):
         self.time_steps += 1
-        env_ids = torch.where(self.time_steps >= self.motion.time_step_total)[0]
-        self._resample_command(env_ids)
+        if self.cfg.loop:
+            env_ids = torch.where(self.time_steps >= self.motion.time_step_total)[0]
+            if len(env_ids) > 0:
+                self._resample_command(env_ids)
+        else:
+            self.time_steps.clamp_(max=self.motion.time_step_total - 1)
 
         anchor_pos_w_repeat = self.anchor_pos_w[:, None, :].repeat(1, len(self.cfg.body_names), 1)
         anchor_quat_w_repeat = self.anchor_quat_w[:, None, :].repeat(1, len(self.cfg.body_names), 1)
@@ -353,6 +360,9 @@ class MotionCommandCfg(CommandTermCfg):
     """Configuration for the motion command."""
 
     class_type: type = MotionCommand
+
+    play: bool = True
+    loop: bool = True
 
     asset_name: str = MISSING
 
