@@ -41,10 +41,16 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
         self.body_ang_vel_w = cmd.motion.body_ang_vel_w.to("cpu")
         self.time_step_total = self.joint_pos.shape[0]
 
+        # Extract ONNX compatible wrapper that handles normalization and deterministic output cleanly for RSL-RL 4.x
+        if hasattr(self.actor, "as_onnx"):
+            self.actor = self.actor.as_onnx(verbose=verbose)
+
     def forward(self, x, time_step):
         time_step_clamped = torch.clamp(time_step.long().squeeze(-1), max=self.time_step_total - 1)
+        
+        # self.actor is the ONNX wrapper now, we call it directly (it handles normalization)
         return (
-            self.actor(self.normalizer(x)),
+            self.actor(x),
             self.joint_pos[time_step_clamped],
             self.joint_vel[time_step_clamped],
             self.body_pos_w[time_step_clamped],
@@ -55,14 +61,24 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
 
     def export(self, path, filename):
         self.to("cpu")
-        obs = torch.zeros(1, self.actor[0].in_features)
+        self.eval()
+        # Extract features depending on if we wrapped with rsl_rl 4 .as_onnx() or not
+        if hasattr(self.actor, "input_size"):
+            in_features = self.actor.input_size
+        else:
+            try:
+                first_linear = next(m for m in self.actor.modules() if isinstance(m, torch.nn.Linear))
+                in_features = first_linear.in_features
+            except StopIteration:
+                in_features = self.actor[0].in_features  # fallback for plain Sequential
+        obs = torch.zeros(1, in_features)
         time_step = torch.zeros(1, 1)
         torch.onnx.export(
             self,
             (obs, time_step),
             os.path.join(path, filename),
             export_params=True,
-            opset_version=11,
+            opset_version=18,
             verbose=self.verbose,
             input_names=["obs", "time_step"],
             output_names=[
@@ -74,8 +90,40 @@ class _OnnxMotionPolicyExporter(_OnnxPolicyExporter):
                 "body_lin_vel_w",
                 "body_ang_vel_w",
             ],
-            dynamic_axes={},
         )
+
+
+def export_policy_as_jit(actor_module, path: str, filename: str) -> None:
+    """Export policy as TorchScript JIT for deployment on Booster T1.
+
+    The exported model takes obs of shape (1, obs_dim) and returns actions of
+    shape (1, action_dim), matching the interface expected by booster_deploy's
+    ``torch.jit.load()``.
+    """
+    if not os.path.exists(path):
+        os.makedirs(path, exist_ok=True)
+
+    actor_module = actor_module.cpu().eval()
+
+    # Infer obs size from the first Linear layer
+    first_linear = next(m for m in actor_module.modules() if isinstance(m, torch.nn.Linear))
+    obs_size = first_linear.in_features
+
+    # Wrapper so forward() calls act_inference (mean only, no std)
+    class _JitWrapper(torch.nn.Module):
+        def __init__(self, inner):
+            super().__init__()
+            self._inner = inner
+
+        def forward(self, obs: torch.Tensor) -> torch.Tensor:
+            return self._inner.act_inference(obs)
+
+    wrapper = _JitWrapper(actor_module).eval()
+    dummy_obs = torch.zeros(1, obs_size)
+    with torch.no_grad():
+        traced = torch.jit.trace(wrapper, dummy_obs)
+    torch.jit.save(traced, os.path.join(path, filename))
+    print(f"[INFO] Exported JIT policy to: {os.path.join(path, filename)}")
 
 
 def list_to_csv_str(arr, *, decimals: int = 3, delimiter: str = ",") -> str:

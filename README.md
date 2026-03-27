@@ -83,40 +83,128 @@ Note: The reference motion should be retargeted and use generalized coordinates 
 
 
 - Convert retargeted motions to include the maximum coordinates information (body pose, body velocity, and body
-  acceleration) via forward kinematics,
+  acceleration) via forward kinematics:
 
 ```bash
-python scripts/csv_to_npz.py --input_file {motion_name}.csv --input_fps 30 --output_name {motion_name} --headless
+# Unitree G1 (default)
+python scripts/csv_to_npz.py \
+  --input_file {motion_name}.csv --input_fps 30 \
+  --output_name {motion_name} \
+  --wandb_project {artifact_project_name} \
+  --headless
+
+# Booster T1
+python scripts/csv_to_npz.py \
+  --input_file {motion_t1}.csv --input_fps 30 \
+  --output_name {motion_name} \
+  --robot booster_t1 \
+  --wandb_project {artifact_project_name} \
+  --headless
 ```
 
-This will automatically upload the processed motion file to the WandB registry with output name {motion_name}.
+`--wandb_project` controls the wandb project where the NPZ artifact is uploaded (default: `csv_to_npz`). The
+project is created automatically on first upload. The artifact path used in training will be
+`{your-entity}/{artifact_project_name}/{motion_name}`.
 
-- Test if the WandB registry works properly by replaying the motion in Isaac Sim:
+- Test the upload by replaying the motion in Isaac Sim:
 
 ```bash
-python scripts/replay_npz.py --registry_name={your-organization}-org/wandb-registry-motions/{motion_name}
+# From wandb registry
+python scripts/replay_npz.py \
+  --registry_name {your-entity}/{artifact_project_name}/{motion_name} \
+  --robot booster_t1
+
+# From local file
+python scripts/replay_npz.py \
+  --motion_file /path/to/motion.npz \
+  --robot booster_t1
 ```
 
 - Debugging
-    - Make sure to export WANDB_ENTITY to your organization name, not your personal username.
-    - If /tmp folder is not accessible, modify csv_to_npz.py L319 & L326 to a temporary folder of your choice.
+    - Make sure to export `WANDB_ENTITY` to your organization name, not your personal username.
+    - If `/tmp` is not accessible, modify `csv_to_npz.py` to a temporary folder of your choice.
 
 ### Policy Training
+
+Available tasks:
+
+| Task ID | Robot | Notes |
+|---------|-------|-------|
+| `Tracking-Flat-G1-v0` | Unitree G1 | Full obs (requires state estimation) |
+| `Tracking-Flat-G1-Wo-State-Estimation-v0` | Unitree G1 | No `motion_anchor_pos_b` / `base_lin_vel` |
+| `Tracking-Flat-G1-Low-Freq-v0` | Unitree G1 | Half control frequency |
+| `Tracking-Flat-T1-Wo-State-Estimation-v0` | Booster T1 | No `motion_anchor_pos_b` / `base_lin_vel` — **deploy-ready** |
+
+> **T1 note:** The Booster T1 hardware does not have an absolute position or linear velocity estimator.
+> Always use `Tracking-Flat-T1-Wo-State-Estimation-v0` for T1 — a full-obs variant is not registered.
 
 - Train policy by the following command:
 
 ```bash
-python scripts/rsl_rl/train.py --task=Tracking-Flat-G1-v0 \
---registry_name {your-organization}-org/wandb-registry-motions/{motion_name} \
---headless --logger wandb --log_project_name {project_name} --run_name {run_name}
+# Unitree G1
+python scripts/rsl_rl/train.py \
+  --task=Tracking-Flat-G1-v0 \
+  --registry_name {your-entity}/{artifact_project_name}/{motion_name} \
+  --headless --logger wandb \
+  --log_project_name {training_project_name} \
+  --run_name {run_name}
+
+# Booster T1
+python scripts/rsl_rl/train.py \
+  --task=Tracking-Flat-T1-Wo-State-Estimation-v0 \
+  --registry_name {your-entity}/{artifact_project_name}/{motion_name} \
+  --headless --logger wandb \
+  --log_project_name {training_project_name} \
+  --run_name {run_name}
 ```
+
+**wandb flags explained:**
+
+| Flag | Where it goes | Set by |
+|------|--------------|--------|
+| `--registry_name` | Where to **download** the NPZ artifact from | Upload step (`csv_to_npz.py --wandb_project`) |
+| `--log_project_name` | wandb **project** where training charts/metrics are logged | You choose at train time |
+| `--run_name` | Name of the individual **run** inside that project | You choose at train time |
+
+- `--log_project_name` and `--registry_name` are **completely independent**. Not passing `--log_project_name` does NOT default to the artifact project — wandb will use its own default (typically `uncategorized`). Always pass it explicitly.
+- Both projects are created automatically on first use — no need to create them on wandb.ai beforehand.
+- `--run_name` is optional. If omitted, wandb generates a random name (e.g. `golden-sunset-42`).
+
+Visually:
+```
+BoosterT1_Training/      ← --log_project_name
+├── chute_v1_run1        ← --run_name
+├── chute_v1_run2
+└── chute_pedro_v1
+```
+
+Example end-to-end:
+```bash
+# 1. Upload motion to project "BoosterT1_Motions"
+python scripts/csv_to_npz.py ... --wandb_project BoosterT1_Motions --output_name chute_v1
+
+# 2. Train and log charts to project "BoosterT1_Training"
+python scripts/rsl_rl/train.py \
+  --task=Tracking-Flat-T1-Wo-State-Estimation-v0 \
+  --registry_name {your-entity}/BoosterT1_Motions/chute_v1 \
+  --logger wandb \
+  --log_project_name BoosterT1_Training \
+  --run_name chute_v1_run1 \
+  --headless
+```
+
+Add `--max_iterations N` to override the number of PPO iterations (default: 30000 for T1/G1, set in `agents/rsl_rl_ppo_cfg.py`).
 
 ### Policy Evaluation
 
 - Play the trained policy by the following command:
 
 ```bash
+# Unitree G1
 python scripts/rsl_rl/play.py --task=Tracking-Flat-G1-v0 --num_envs=2 --wandb_path={wandb-run-path}
+
+# Booster T1
+python scripts/rsl_rl/play.py --task=Tracking-Flat-T1-Wo-State-Estimation-v0 --num_envs=2 --wandb_path={wandb-run-path}
 ```
 
 The WandB run path can be located in the run overview. It follows the format {your_organization}/{project_name}/ along
@@ -150,11 +238,16 @@ Below is an overview of the code structure for this repository:
   Contains the environment (MDP) hyperparameters configuration for the tracking task.
 
 - **`source/whole_body_tracking/whole_body_tracking/tasks/tracking/config/g1/agents/rsl_rl_ppo_cfg.py`**
-  Contains the PPO hyperparameters for the tracking task.
+  Contains the PPO hyperparameters for the G1 tracking task.
+
+- **`source/whole_body_tracking/whole_body_tracking/tasks/tracking/config/t1/`**
+  Robot-specific configuration for the Booster T1 (23 DOF). Mirrors the G1 structure:
+  - `flat_env_cfg.py` — `T1FlatEnvCfg` and `T1FlatWoStateEstimationEnvCfg`
+  - `agents/rsl_rl_ppo_cfg.py` — `T1FlatPPORunnerCfg`
 
 - **`source/whole_body_tracking/whole_body_tracking/robots`**
   Contains robot-specific settings, including armature parameters, joint stiffness/damping calculation, and action scale
-  calculation.
+  calculation. Robots supported: `g1.py` (Unitree G1), `t1.py` (Booster T1).
 
 - **`scripts`**
   Includes utility scripts for preprocessing motion data, training policies, and evaluating trained policies.
