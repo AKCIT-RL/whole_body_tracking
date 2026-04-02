@@ -10,6 +10,7 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import os
 import numpy as np
 
 from isaaclab.app import AppLauncher
@@ -292,8 +293,46 @@ class MotionLoader:
         return state, reset_flag
 
 
-def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene, joint_names: list[str]):
-    """Runs the simulation loop."""
+def _teardown_simulation_after_csv_export(sim: SimulationContext | None, scene: InteractiveScene | None) -> None:
+    """Tear down scene/sim before ``simulation_app.close()`` (full Kit shutdown).
+
+    Skips ``sim.stop()`` by default: in Docker/headless it often **hangs indefinitely** after ``sim.reset()``
+    (see Isaac Lab / Omniverse shutdown issues). Full process exit still happens via
+    ``clear_all_callbacks`` + ``SimulationContext.clear_instance()`` + ``simulation_app.close()`` in ``__main__``.
+
+    Set env ``CSV_TO_NPZ_CALL_SIM_STOP=1`` to opt into ``sim.stop()`` (e.g. local GUI debugging).
+    """
+    if scene is not None:
+        try:
+            del scene
+        except Exception as exc:
+            print(f"[WARN]: csv_to_npz scene teardown: {exc}")
+    if sim is None:
+        return
+    call_sim_stop = os.environ.get("CSV_TO_NPZ_CALL_SIM_STOP", "").lower() in ("1", "true", "yes")
+    if call_sim_stop:
+        try:
+            try:
+                headless = not sim.has_gui()
+            except Exception:
+                headless = True
+            if headless and hasattr(sim, "stop"):
+                sim.stop()
+        except Exception as exc:
+            print(f"[WARN]: csv_to_npz sim.stop: {exc}")
+    try:
+        if hasattr(sim, "clear_all_callbacks"):
+            sim.clear_all_callbacks()
+    except Exception as exc:
+        print(f"[WARN]: csv_to_npz clear_all_callbacks: {exc}")
+    try:
+        SimulationContext.clear_instance()
+    except Exception as exc:
+        print(f"[WARN]: csv_to_npz SimulationContext.clear_instance: {exc}")
+
+
+def run_simulator(sim: SimulationContext, scene: InteractiveScene, joint_names: list[str]) -> bool:
+    """Runs the simulation loop. Returns True if motion was exported and uploaded to W&B."""
     # Load motion
     motion = MotionLoader(
         motion_file=args_cli.input_file,
@@ -416,7 +455,5 @@ def main():
 
 
 if __name__ == "__main__":
-    # run the main function
     main()
-    # close sim app
     simulation_app.close()
