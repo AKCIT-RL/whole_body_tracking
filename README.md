@@ -60,6 +60,10 @@ rm unitree_description.tar.gz
 python -m pip install -e source/whole_body_tracking
 ```
 
+## Docker
+
+Pre-built **Isaac Lab** containers (workstation **amd64** and **DGX Spark** **aarch64**) are documented in [README_DOCKER.md](README_DOCKER.md): `docker compose`, `docker/build.sh` profiles, and `docker-compose.spark.yaml`.
+
 ## Motion Tracking
 
 ### Motion Preprocessing & Registry Setup
