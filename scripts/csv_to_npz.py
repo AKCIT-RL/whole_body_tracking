@@ -529,16 +529,6 @@ def run_simulator(sim: SimulationContext, scene: InteractiveScene, joint_names: 
 
             import wandb
 
-<<<<<<< HEAD
-            # Use a safe artifact name (basename without path/extension), not a full path
-            artifact_name = os.path.splitext(os.path.basename(output_path))[0]
-            run = wandb.init(project="csv_to_npz", name=artifact_name)
-            print(f"[INFO]: Logging motion to wandb: {artifact_name}")
-            REGISTRY = "motions"
-            logged_artifact = run.log_artifact(artifact_or_path=output_path, name=artifact_name, type=REGISTRY)
-            run.link_artifact(artifact=logged_artifact, target_path=f"wandb-registry-{REGISTRY}/{artifact_name}")
-            print(f"[INFO]: Motion saved to wandb registry: {REGISTRY}/{artifact_name}")
-=======
             COLLECTION = args_cli.output_name
             run = wandb.init(project=args_cli.wandb_project, name=COLLECTION)
             print(f"[INFO]: Logging motion to wandb: {COLLECTION}")
@@ -550,7 +540,6 @@ def run_simulator(sim: SimulationContext, scene: InteractiveScene, joint_names: 
             except Exception as e:
                 print(f"[WARNING]: Could not link artifact to registry (registry may not exist): {e}")
             run.finish()
->>>>>>> origin/main
 
 
 def main():
