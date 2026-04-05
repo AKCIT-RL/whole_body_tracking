@@ -32,6 +32,27 @@ parser.add_argument(
 
 parser.add_argument("--output_file", type=str, default=None, help="Path where to save the output .npz file (directory is created if needed).",)
 parser.add_argument("--output_fps", type=int, default=50, help="The fps of the output motion.")
+parser.add_argument(
+    "--anchor_normalize",
+    action="store_true",
+    default=True,
+    help=(
+        "Normalize motion to a shared anchor reference at frame 0 (default: enabled). "
+        "Use --no-anchor_normalize to disable."
+    ),
+)
+parser.add_argument(
+    "--no-anchor_normalize",
+    action="store_false",
+    dest="anchor_normalize",
+    help="Disable anchor normalization.",
+)
+parser.add_argument(
+    "--anchor_body_name",
+    type=str,
+    default="torso_link",
+    help="Anchor body name used for normalization (should match training config).",
+)
 
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
@@ -60,7 +81,7 @@ from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sim import SimulationContext
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
-from isaaclab.utils.math import axis_angle_from_quat, quat_conjugate, quat_mul, quat_slerp
+from isaaclab.utils.math import axis_angle_from_quat, quat_apply, quat_conjugate, quat_mul, quat_slerp, yaw_quat
 
 ##
 # Pre-defined configs
@@ -108,6 +129,69 @@ class MotionLoader:
         self._load_motion()
         self._interpolate_motion()
         self._compute_velocities()
+
+    def normalize_to_anchor_frame0(
+        self,
+        *,
+        robot,
+        scene: InteractiveScene,
+        physics_dt: float,
+        robot_joint_indexes: torch.Tensor,
+        anchor_body_name: str,
+        env_origin_xy: torch.Tensor,
+    ) -> None:
+        """Normalize base trajectory so the anchor body is at (0,0) with zero yaw at frame 0.
+
+        This is done in robot space (after retargeting), using the robot model to compute
+        the anchor pose from the motion state at frame 0.
+        """
+        if self.motion_base_poss.shape[0] == 0:
+            return
+
+        # --- set robot to motion frame 0 (kinematic update) ---
+        root_states = robot.data.default_root_state.clone()
+        root_states[:, :3] = self.motion_base_poss[0:1]
+        root_states[:, :2] += env_origin_xy[None, :]
+        root_states[:, 3:7] = self.motion_base_rots[0:1]
+        root_states[:, 7:10] = self.motion_base_lin_vels[0:1]
+        root_states[:, 10:] = self.motion_base_ang_vels[0:1]
+        robot.write_root_state_to_sim(root_states)
+
+        joint_pos = robot.data.default_joint_pos.clone()
+        joint_vel = robot.data.default_joint_vel.clone()
+        joint_pos[:, robot_joint_indexes] = self.motion_dof_poss[0:1]
+        joint_vel[:, robot_joint_indexes] = self.motion_dof_vels[0:1]
+        robot.write_joint_state_to_sim(joint_pos, joint_vel)
+
+        # Update internal buffers (no physics step required for kinematics).
+        scene.update(physics_dt)
+
+        # --- compute anchor pose at frame 0 ---
+        try:
+            anchor_index = robot.body_names.index(anchor_body_name)
+        except Exception as e:
+            raise ValueError(f"Anchor body '{anchor_body_name}' not found in robot.body_names") from e
+
+        anchor_pos_w0 = robot.data.body_pos_w[0, anchor_index]  # (3,)
+        anchor_quat_w0 = robot.data.body_quat_w[0, anchor_index]  # (4,) wxyz
+
+        # Remove environment origin from the ground plane translation (x,y).
+        anchor_pos_local = anchor_pos_w0.clone()
+        anchor_pos_local[:2] -= env_origin_xy
+
+        # Yaw-only alignment: rotate everything by inverse yaw of anchor at frame 0.
+        q_yaw0 = yaw_quat(anchor_quat_w0.unsqueeze(0)).squeeze(0)
+        q_yaw0_inv = quat_conjugate(q_yaw0)
+        q_yaw0_inv_rep = q_yaw0_inv.unsqueeze(0).repeat(self.motion_base_poss.shape[0], 1)
+
+        # 1) translate base so anchor frame-0 is at x=y=0 (ground plane)
+        self.motion_base_poss[:, :2] -= anchor_pos_local[:2].unsqueeze(0)
+
+        # 2) rotate base positions/velocities/orientations by inverse yaw
+        self.motion_base_poss = quat_apply(q_yaw0_inv_rep, self.motion_base_poss)
+        self.motion_base_lin_vels = quat_apply(q_yaw0_inv_rep, self.motion_base_lin_vels)
+        self.motion_base_ang_vels = quat_apply(q_yaw0_inv_rep, self.motion_base_ang_vels)
+        self.motion_base_rots = quat_mul(q_yaw0_inv_rep, self.motion_base_rots)
 
     def _load_motion(self):
         """Loads the motion from the csv file."""
@@ -239,6 +323,18 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene, joi
     # Extract scene entities
     robot = scene["robot"]
     robot_joint_indexes = robot.find_joints(joint_names, preserve_order=True)[0]
+
+    # Normalize motion reference (anchor body) before replay/logging.
+    if args_cli.anchor_normalize:
+        # Write frame-0 state so kinematics buffers are valid, then update scene once.
+        motion.normalize_to_anchor_frame0(
+            robot=robot,
+            scene=scene,
+            physics_dt=sim.get_physics_dt(),
+            robot_joint_indexes=robot_joint_indexes,
+            anchor_body_name=args_cli.anchor_body_name,
+            env_origin_xy=scene.env_origins[0, :2],
+        )
 
     # ------- data logger -------------------------------------------------------
     log = {
