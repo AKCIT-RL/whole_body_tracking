@@ -51,7 +51,14 @@ parser.add_argument(
     "--anchor_body_name",
     type=str,
     default="torso_link",
-    help="Anchor body name used for normalization (should match training config).",
+    help="Anchor body name used for normalization (should match training config).",)
+parser.add_argument("--wandb_project", type=str, default="csv_to_npz", help="wandb project name for artifact upload.")
+parser.add_argument(
+    "--robot",
+    type=str,
+    default="unitree_g1",
+    choices=["unitree_g1", "booster_t1"],
+    help="Robot to use for motion replay (default: unitree_g1).",
 )
 
 # append AppLauncher cli args
@@ -87,26 +94,95 @@ from isaaclab.utils.math import axis_angle_from_quat, quat_apply, quat_conjugate
 # Pre-defined configs
 ##
 from whole_body_tracking.robots.g1 import G1_CYLINDER_CFG
+from whole_body_tracking.robots.t1 import T1_CFG
+
+_T1_JOINT_NAMES = [
+    "AAHead_yaw",
+    "Head_pitch",
+    "Left_Shoulder_Pitch",
+    "Left_Shoulder_Roll",
+    "Left_Elbow_Pitch",
+    "Left_Elbow_Yaw",
+    "Right_Shoulder_Pitch",
+    "Right_Shoulder_Roll",
+    "Right_Elbow_Pitch",
+    "Right_Elbow_Yaw",
+    "Waist",
+    "Left_Hip_Pitch",
+    "Left_Hip_Roll",
+    "Left_Hip_Yaw",
+    "Left_Knee_Pitch",
+    "Left_Ankle_Pitch",
+    "Left_Ankle_Roll",
+    "Right_Hip_Pitch",
+    "Right_Hip_Roll",
+    "Right_Hip_Yaw",
+    "Right_Knee_Pitch",
+    "Right_Ankle_Pitch",
+    "Right_Ankle_Roll",
+]
+
+_G1_JOINT_NAMES = [
+    "left_hip_pitch_joint",
+    "left_hip_roll_joint",
+    "left_hip_yaw_joint",
+    "left_knee_joint",
+    "left_ankle_pitch_joint",
+    "left_ankle_roll_joint",
+    "right_hip_pitch_joint",
+    "right_hip_roll_joint",
+    "right_hip_yaw_joint",
+    "right_knee_joint",
+    "right_ankle_pitch_joint",
+    "right_ankle_roll_joint",
+    "waist_yaw_joint",
+    "waist_roll_joint",
+    "waist_pitch_joint",
+    "left_shoulder_pitch_joint",
+    "left_shoulder_roll_joint",
+    "left_shoulder_yaw_joint",
+    "left_elbow_joint",
+    "left_wrist_roll_joint",
+    "left_wrist_pitch_joint",
+    "left_wrist_yaw_joint",
+    "right_shoulder_pitch_joint",
+    "right_shoulder_roll_joint",
+    "right_shoulder_yaw_joint",
+    "right_elbow_joint",
+    "right_wrist_roll_joint",
+    "right_wrist_pitch_joint",
+    "right_wrist_yaw_joint",
+]
+
+_ROBOT_CFGS = {
+    "unitree_g1": G1_CYLINDER_CFG,
+    "booster_t1": T1_CFG,
+}
+
+_ROBOT_JOINT_NAMES = {
+    "unitree_g1": _G1_JOINT_NAMES,
+    "booster_t1": _T1_JOINT_NAMES,
+}
 
 
-@configclass
-class ReplayMotionsSceneCfg(InteractiveSceneCfg):
-    """Configuration for a replay motions scene."""
+def _make_scene_cfg(robot_cfg: ArticulationCfg):
+    @configclass
+    class ReplayMotionsSceneCfg(InteractiveSceneCfg):
+        """Configuration for a replay motions scene."""
 
-    # ground plane
-    ground = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+        ground = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
 
-    # lights
-    sky_light = AssetBaseCfg(
-        prim_path="/World/skyLight",
-        spawn=sim_utils.DomeLightCfg(
-            intensity=750.0,
-            texture_file=f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
-        ),
-    )
+        sky_light = AssetBaseCfg(
+            prim_path="/World/skyLight",
+            spawn=sim_utils.DomeLightCfg(
+                intensity=750.0,
+                texture_file=f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
+            ),
+        )
 
-    # articulation
-    robot: ArticulationCfg = G1_CYLINDER_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        robot: ArticulationCfg = robot_cfg.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+    return ReplayMotionsSceneCfg
 
 
 class MotionLoader:
@@ -196,9 +272,9 @@ class MotionLoader:
     def _load_motion(self):
         """Loads the motion from the csv file."""
         if self.frame_range is None:
-            motion = torch.from_numpy(np.loadtxt(self.motion_file, delimiter=","))
+            motion = torch.tensor(np.loadtxt(self.motion_file, delimiter=","))
         else:
-            motion = torch.from_numpy(
+            motion = torch.tensor(
                 np.loadtxt(
                     self.motion_file,
                     delimiter=",",
@@ -309,8 +385,46 @@ class MotionLoader:
         return state, reset_flag
 
 
-def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene, joint_names: list[str]):
-    """Runs the simulation loop."""
+def _teardown_simulation_after_csv_export(sim: SimulationContext | None, scene: InteractiveScene | None) -> None:
+    """Tear down scene/sim before ``simulation_app.close()`` (full Kit shutdown).
+
+    Skips ``sim.stop()`` by default: in Docker/headless it often **hangs indefinitely** after ``sim.reset()``
+    (see Isaac Lab / Omniverse shutdown issues). Full process exit still happens via
+    ``clear_all_callbacks`` + ``SimulationContext.clear_instance()`` + ``simulation_app.close()`` in ``__main__``.
+
+    Set env ``CSV_TO_NPZ_CALL_SIM_STOP=1`` to opt into ``sim.stop()`` (e.g. local GUI debugging).
+    """
+    if scene is not None:
+        try:
+            del scene
+        except Exception as exc:
+            print(f"[WARN]: csv_to_npz scene teardown: {exc}")
+    if sim is None:
+        return
+    call_sim_stop = os.environ.get("CSV_TO_NPZ_CALL_SIM_STOP", "").lower() in ("1", "true", "yes")
+    if call_sim_stop:
+        try:
+            try:
+                headless = not sim.has_gui()
+            except Exception:
+                headless = True
+            if headless and hasattr(sim, "stop"):
+                sim.stop()
+        except Exception as exc:
+            print(f"[WARN]: csv_to_npz sim.stop: {exc}")
+    try:
+        if hasattr(sim, "clear_all_callbacks"):
+            sim.clear_all_callbacks()
+    except Exception as exc:
+        print(f"[WARN]: csv_to_npz clear_all_callbacks: {exc}")
+    try:
+        SimulationContext.clear_instance()
+    except Exception as exc:
+        print(f"[WARN]: csv_to_npz SimulationContext.clear_instance: {exc}")
+
+
+def run_simulator(sim: SimulationContext, scene: InteractiveScene, joint_names: list[str]) -> bool:
+    """Runs the simulation loop. Returns True if motion was exported and uploaded to W&B."""
     # Load motion
     motion = MotionLoader(
         motion_file=args_cli.input_file,
@@ -382,7 +496,9 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene, joi
         scene.update(sim.get_physics_dt())
 
         pos_lookat = root_states[0, :3].cpu().numpy()
-        sim.set_camera_view(pos_lookat + np.array([2.0, 2.0, 0.5]), pos_lookat)
+        camera_offset = [2.0, 2.0, 0.5]
+        camera_pos = [pos_lookat[0] + camera_offset[0], pos_lookat[1] + camera_offset[1], pos_lookat[2] + camera_offset[2]]
+        sim.set_camera_view(camera_pos, pos_lookat.tolist())
 
         if not file_saved:
             log["joint_pos"].append(robot.data.joint_pos[0, :].cpu().numpy().copy())
@@ -413,6 +529,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene, joi
 
             import wandb
 
+<<<<<<< HEAD
             # Use a safe artifact name (basename without path/extension), not a full path
             artifact_name = os.path.splitext(os.path.basename(output_path))[0]
             run = wandb.init(project="csv_to_npz", name=artifact_name)
@@ -421,61 +538,42 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene, joi
             logged_artifact = run.log_artifact(artifact_or_path=output_path, name=artifact_name, type=REGISTRY)
             run.link_artifact(artifact=logged_artifact, target_path=f"wandb-registry-{REGISTRY}/{artifact_name}")
             print(f"[INFO]: Motion saved to wandb registry: {REGISTRY}/{artifact_name}")
+=======
+            COLLECTION = args_cli.output_name
+            run = wandb.init(project=args_cli.wandb_project, name=COLLECTION)
+            print(f"[INFO]: Logging motion to wandb: {COLLECTION}")
+            REGISTRY = "motions"
+            logged_artifact = run.log_artifact(artifact_or_path="/tmp/motion.npz", name=COLLECTION, type=REGISTRY)
+            try:
+                run.link_artifact(artifact=logged_artifact, target_path=f"wandb-registry-{REGISTRY}/{COLLECTION}")
+                print(f"[INFO]: Motion saved to wandb registry: {REGISTRY}/{COLLECTION}")
+            except Exception as e:
+                print(f"[WARNING]: Could not link artifact to registry (registry may not exist): {e}")
+            run.finish()
+>>>>>>> origin/main
 
 
 def main():
     """Main function."""
-    # Load kit helper
+    robot_cfg = _ROBOT_CFGS[args_cli.robot]
+    joint_names = _ROBOT_JOINT_NAMES[args_cli.robot]
+    print(f"[INFO]: Robot: {args_cli.robot} ({len(joint_names)} joints)")
+
     sim_cfg = sim_utils.SimulationCfg(device=args_cli.device)
     sim_cfg.dt = 1.0 / args_cli.output_fps
     sim = SimulationContext(sim_cfg)
     # Design scene
-    scene_cfg = ReplayMotionsSceneCfg(num_envs=1, env_spacing=2.0)
+    SceneCfg = _make_scene_cfg(robot_cfg)
+    scene_cfg = SceneCfg(num_envs=1, env_spacing=2.0)
     scene = InteractiveScene(scene_cfg)
     # Play the simulator
     sim.reset()
     # Now we are ready!
     print("[INFO]: Setup complete...")
     # Run the simulator
-    run_simulator(
-        sim,
-        scene,
-        joint_names=[
-            "left_hip_pitch_joint",
-            "left_hip_roll_joint",
-            "left_hip_yaw_joint",
-            "left_knee_joint",
-            "left_ankle_pitch_joint",
-            "left_ankle_roll_joint",
-            "right_hip_pitch_joint",
-            "right_hip_roll_joint",
-            "right_hip_yaw_joint",
-            "right_knee_joint",
-            "right_ankle_pitch_joint",
-            "right_ankle_roll_joint",
-            "waist_yaw_joint",
-            "waist_roll_joint",
-            "waist_pitch_joint",
-            "left_shoulder_pitch_joint",
-            "left_shoulder_roll_joint",
-            "left_shoulder_yaw_joint",
-            "left_elbow_joint",
-            "left_wrist_roll_joint",
-            "left_wrist_pitch_joint",
-            "left_wrist_yaw_joint",
-            "right_shoulder_pitch_joint",
-            "right_shoulder_roll_joint",
-            "right_shoulder_yaw_joint",
-            "right_elbow_joint",
-            "right_wrist_roll_joint",
-            "right_wrist_pitch_joint",
-            "right_wrist_yaw_joint",
-        ],
-    )
+    run_simulator(sim, scene, joint_names=joint_names)
 
 
 if __name__ == "__main__":
-    # run the main function
     main()
-    # close sim app
     simulation_app.close()

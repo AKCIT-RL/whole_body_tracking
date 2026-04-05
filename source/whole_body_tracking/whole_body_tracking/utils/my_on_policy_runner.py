@@ -3,10 +3,8 @@ import os
 from rsl_rl.env import VecEnv
 from rsl_rl.runners.on_policy_runner import OnPolicyRunner
 
-from isaaclab_rl.rsl_rl import export_policy_as_onnx
-
 import wandb
-from whole_body_tracking.utils.exporter import attach_onnx_metadata, export_motion_policy_as_onnx
+from whole_body_tracking.utils.exporter import attach_onnx_metadata
 
 
 def _get_obs_normalizer(policy):
@@ -22,11 +20,11 @@ class MyOnPolicyRunner(OnPolicyRunner):
     def save(self, path: str, infos=None):
         """Save the model and training information."""
         super().save(path, infos)
-        if self.logger_type in ["wandb"]:
+        if getattr(self.logger, "logger_type", None) == "wandb":
             policy_path = path.split("model")[0]
             filename = policy_path.split("/")[-2] + ".onnx"
-            normalizer = _get_obs_normalizer(self.alg.policy)
-            export_policy_as_onnx(self.alg.policy, normalizer=normalizer, path=policy_path, filename=filename)
+            # Use built-in export method for rsl_rl >= 4.0.0
+            self.export_policy_to_onnx(path=policy_path, filename=filename)
             attach_onnx_metadata(self.env.unwrapped, wandb.run.name, path=policy_path, filename=filename)
             wandb.save(policy_path + filename, base_path=os.path.dirname(policy_path))
 
@@ -41,13 +39,11 @@ class MotionOnPolicyRunner(OnPolicyRunner):
     def save(self, path: str, infos=None):
         """Save the model and training information."""
         super().save(path, infos)
-        if self.logger_type in ["wandb"]:
+        if getattr(self.logger, "logger_type", None) == "wandb":
             policy_path = path.split("model")[0]
             filename = policy_path.split("/")[-2] + ".onnx"
-            normalizer = _get_obs_normalizer(self.alg.policy)
-            export_motion_policy_as_onnx(
-                self.env.unwrapped, self.alg.policy, normalizer=normalizer, path=policy_path, filename=filename
-            )
+            # Use built-in export method for rsl_rl >= 4.0.0
+            self.export_policy_to_onnx(path=policy_path, filename=filename)
             attach_onnx_metadata(self.env.unwrapped, wandb.run.name, path=policy_path, filename=filename)
             wandb.save(policy_path + filename, base_path=os.path.dirname(policy_path))
 
