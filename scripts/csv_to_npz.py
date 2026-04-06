@@ -416,7 +416,15 @@ def run_simulator(sim: SimulationContext, scene: InteractiveScene, joint_names: 
             ):
                 log[k] = np.stack(log[k], axis=0)
 
+            log["joint_names"] = np.array(robot.data.joint_names)
+            log["body_names"] = np.array(robot.data.body_names)
+
             np.savez("/tmp/motion.npz", **log)
+
+            local_npz = os.path.join("motions", f"{args_cli.output_name}.npz")
+            os.makedirs("motions", exist_ok=True)
+            np.savez(local_npz, **log)
+            print(f"[INFO]: Motion saved locally: {local_npz}")
 
             import wandb
 
@@ -431,6 +439,7 @@ def run_simulator(sim: SimulationContext, scene: InteractiveScene, joint_names: 
             except Exception as e:
                 print(f"[WARNING]: Could not link artifact to registry (registry may not exist): {e}")
             run.finish()
+            os._exit(0)
 
 
 def main():

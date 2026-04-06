@@ -214,8 +214,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             )
         except Exception as e:
             print(f"[WARN] Failed to export ONNX model: {e}")
+    # Ensure actor (and its normalizer buffers) are on the simulation device after export.
+    # export_policy_as_jit calls actor_module.cpu() as a side effect, which moves buffers to CPU.
+    ppo_runner.alg.actor.to(env.unwrapped.device)
+
     # reset environment
-    obs, _ = env.get_observations()
+    obs_result = env.get_observations()
+    obs = obs_result[0] if isinstance(obs_result, (tuple, list)) else obs_result
     timestep = 0
     # simulate environment
     while simulation_app.is_running():
