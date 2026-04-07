@@ -16,6 +16,13 @@ RUN curl -L -o unitree_description.tar.gz \
     tar -xzf unitree_description.tar.gz -C source/whole_body_tracking/whole_body_tracking/assets/ && \
     rm unitree_description.tar.gz
 
+# Booster Robotics T1 URDFs under repo-root robots/ — editable install so BOOSTER_ASSETS_DIR resolves correctly
+# (see https://github.com/BoosterRobotics/booster_assets; plain pip from sdist does not ship robots/ next to the package)
+RUN curl -sL https://github.com/BoosterRobotics/booster_assets/archive/refs/heads/main.tar.gz -o /tmp/booster_assets.tgz && \
+    mkdir -p /opt && tar -xzf /tmp/booster_assets.tgz -C /opt && \
+    mv /opt/booster_assets-main /opt/booster_assets && rm /tmp/booster_assets.tgz && \
+    /isaac-sim/python.sh -m pip install -e /opt/booster_assets
+
 RUN /isaac-sim/python.sh -m pip install -e source/whole_body_tracking
 
 WORKDIR /workspace/whole_body_tracking
