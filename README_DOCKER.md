@@ -1,6 +1,6 @@
 # Whole Body Tracking — Docker Guide
 
-This guide explains how to run BeyondMimic (`whole_body_tracking`) inside a Docker container using the pre-built NVIDIA Isaac Lab 2.1.0 image.
+This guide explains how to run BeyondMimic (`whole_body_tracking`) inside a Docker container using the pre-built NVIDIA Isaac Lab image.
 
 ## Host Prerequisites
 
@@ -31,14 +31,41 @@ docker login nvcr.io
 
 ### 4. System Requirements
 
-- **OS:** Ubuntu 22.04 (Linux x64)
+- **OS (default profile):** Ubuntu 22.04 (Linux x64)
 - **RAM:** 32 GB or more
 - **GPU VRAM:** 16 GB or more
 - **NVIDIA driver:** 535.129.03 or newer recommended
 
+For **DGX Spark (aarch64)**, use NVIDIA production drivers in the 580 branch (Isaac Lab docs recommend 580.95.05+) and CUDA 13 compatible containers.
+
 ### 5. Repository Location
 
 Because of snap/Docker limitations on some setups, keep the repository under `/home` on the host.
+
+## DGX Spark (aarch64) preflight checklist
+
+Before building the Spark image, validate the host/runtime:
+
+```bash
+# 1) Host GPU/driver check
+nvidia-smi
+
+# 2) NVIDIA container runtime check
+nvidia-ctk --version
+docker run --rm --gpus all nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04 nvidia-smi
+
+# 3) NGC auth (required to pull nvcr.io/nvidia/isaac-lab:* images)
+docker login nvcr.io
+```
+
+Validate the selected Isaac Lab tag has ARM64 support before build:
+
+```bash
+export ISAAC_LAB_IMAGE=nvcr.io/nvidia/isaac-lab:2.3.2
+docker buildx imagetools inspect "$ISAAC_LAB_IMAGE" | rg "linux/arm64"
+```
+
+If the command above shows no `linux/arm64`, choose another compatible tag.
 
 ## Building the Image
 
@@ -49,6 +76,14 @@ docker compose build
 
 The build pulls the NGC base image (~12 GB) and installs `whole_body_tracking`. The first run may take several minutes.
 
+### Build for DGX Spark
+
+```bash
+cd whole_body_tracking
+export ISAAC_LAB_IMAGE=nvcr.io/nvidia/isaac-lab:2.3.2
+docker compose -f docker-compose.spark.yaml build
+```
+
 ## Running the Container
 
 ### Interactive mode (bash)
@@ -58,6 +93,19 @@ docker compose run --rm whole-body-tracking
 ```
 
 This opens a shell inside the container. The working directory is `/workspace/whole_body_tracking`.
+
+### Interactive mode on DGX Spark
+
+```bash
+docker compose -f docker-compose.spark.yaml run --rm whole-body-tracking-spark
+```
+
+Optional external mocap mount (only if the directory exists on host):
+
+```bash
+export G1_MOCAP_DIR=/absolute/path/to/g1_mocap
+docker compose -f docker-compose.spark.yaml run --rm whole-body-tracking-spark
+```
 
 ### Usage Examples
 
@@ -102,12 +150,14 @@ export WANDB_ENTITY=your-organization
 
 ## Volumes and Cache
 
-`docker-compose.yaml` mounts named volumes for Isaac Sim caches to reduce load time on later runs:
+`docker-compose.yaml` and `docker-compose.spark.yaml` mount named volumes for Isaac Sim caches to reduce load time on later runs:
 
 - `isaac-cache-kit` — compiled shaders and kit resources
 - `isaac-cache-pip` — Python packages
 - `isaac-logs` — Omniverse logs
 - `./logs` — `whole_body_tracking` logs (bind mount on the host)
+
+Spark compose adds extra caches (`ov`, `GLCache`, `ComputeCache`) for faster repeated startup on DGX Spark.
 
 ## Run a Command Directly (no shell)
 

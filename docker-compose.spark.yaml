@@ -1,0 +1,61 @@
+# DGX Spark (aarch64): build/run whole_body_tracking with Isaac Lab base image for ARM.
+#
+# Build: docker compose -f docker-compose.spark.yaml build
+# Run:   docker compose -f docker-compose.spark.yaml run --rm whole-body-tracking-spark
+#
+# Override Isaac Lab tag:
+#   export ISAAC_LAB_IMAGE=nvcr.io/nvidia/isaac-lab:2.3.2
+
+services:
+  whole-body-tracking-spark:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        ISAAC_LAB_IMAGE: ${ISAAC_LAB_IMAGE:-nvcr.io/nvidia/isaac-lab:2.3.2}
+    image: whole-body-tracking-spark:latest
+    container_name: whole-body-tracking-spark
+    ipc: host
+    shm_size: "16gb"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      stack:
+        soft: 67108864
+        hard: 67108864
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - ACCEPT_EULA=Y
+      - PRIVACY_CONSENT=Y
+    volumes:
+      - isaac-spark-cache-kit:/isaac-sim/kit/cache
+      - isaac-spark-cache-ov:/root/.cache/ov
+      - isaac-spark-cache-pip:/root/.cache/pip
+      - isaac-spark-cache-gl:/root/.cache/nvidia/GLCache
+      - isaac-spark-cache-compute:/root/.nv/ComputeCache
+      - isaac-spark-logs:/root/.nvidia-omniverse/logs
+      - isaac-spark-data:/root/.local/share/ov/data
+      - ./logs:/workspace/whole_body_tracking/logs
+      # Optional external dataset mount. Set G1_MOCAP_DIR only when the directory exists.
+      - ${G1_MOCAP_DIR:-./logs}:/workspace/g1_mocap
+    network_mode: host
+    stdin_open: true
+    tty: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  isaac-spark-cache-kit:
+  isaac-spark-cache-ov:
+  isaac-spark-cache-pip:
+  isaac-spark-cache-gl:
+  isaac-spark-cache-compute:
+  isaac-spark-logs:
+  isaac-spark-data:
