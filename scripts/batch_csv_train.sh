@@ -109,16 +109,11 @@ if [[ ! -d "$CSV_DIR" ]]; then
   echo "error: CSV directory not found: $CSV_DIR" >&2; exit 1
 fi
 
-mapfile -t csv_files < <(for m in \
-    booster_t1_neyPenalti_cut_reward \
-  ; do echo "$CSV_DIR/$m.csv"; done)
+mapfile -t csv_files < <(find "$CSV_DIR" -maxdepth 1 -type f -name "${ROBOT}_*.csv" | sort)
 
 if [[ ${#csv_files[@]} -eq 0 ]]; then
-  echo "error: no .csv files in $CSV_DIR" >&2; exit 1
+  echo "error: no ${ROBOT}_*.csv files in $CSV_DIR" >&2; exit 1
 fi
-for f in "${csv_files[@]}"; do
-  [[ -f "$f" ]] || { echo "error: CSV not found: $f" >&2; exit 1; }
-done
 
 if [[ -n "${PYTHON:-}" ]]; then
   py_cmd=("$PYTHON")
