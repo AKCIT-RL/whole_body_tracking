@@ -1,23 +1,58 @@
-import os
+# import os
 
 from rsl_rl.env import VecEnv
 from rsl_rl.runners.on_policy_runner import OnPolicyRunner
 
 import wandb
-from whole_body_tracking.utils.exporter import attach_onnx_metadata
+
+# Temporarily disabled: ONNX export during W&B saves (re-enable when rsl_rl API is aligned).
+# from whole_body_tracking.utils.exporter import attach_onnx_metadata, export_motion_policy_as_onnx
+#
+#
+# def _unwrap_to_isaac_env(vec_env):
+#     e = vec_env
+#     while hasattr(e, "unwrapped") and e.unwrapped is not e:
+#         e = e.unwrapped
+#     return e
+#
+#
+# def _export_motion_onnx(runner: OnPolicyRunner, policy_path: str, filename: str) -> None:
+#     """Export ONNX for W&B; uses rsl_rl built-in when present, else project motion exporter."""
+#     if hasattr(runner, "export_policy_to_onnx"):
+#         runner.export_policy_to_onnx(path=policy_path, filename=filename)
+#         return
+#
+#     class _ActorCriticCompat:
+#         def __init__(self, module):
+#             self.actor = module
+#             self.is_recurrent = getattr(module, "is_recurrent", False)
+#
+#     isaac_env = _unwrap_to_isaac_env(runner.env)
+#     actor_module = runner.alg.actor
+#     normalizer = getattr(actor_module, "obs_normalizer", None)
+#     export_motion_policy_as_onnx(
+#         isaac_env,
+#         _ActorCriticCompat(actor_module),
+#         normalizer=normalizer,
+#         path=policy_path,
+#         filename=filename,
+#     )
+#     runner.alg.actor.to(runner.device)
 
 
 class MyOnPolicyRunner(OnPolicyRunner):
     def save(self, path: str, infos=None):
         """Save the model and training information."""
         super().save(path, infos)
-        if getattr(self.logger, "logger_type", None) == "wandb":
-            policy_path = path.split("model")[0]
-            filename = policy_path.split("/")[-2] + ".onnx"
-            # Use built-in export method for rsl_rl >= 4.0.0
-            self.export_policy_to_onnx(path=policy_path, filename=filename)
-            attach_onnx_metadata(self.env.unwrapped, wandb.run.name, path=policy_path, filename=filename)
-            wandb.save(policy_path + filename, base_path=os.path.dirname(policy_path))
+        # if getattr(self, "logger_type", None) == "wandb" and wandb.run is not None:
+        #     policy_path = path.split("model")[0]
+        #     filename = policy_path.split("/")[-2] + ".onnx"
+        #     _export_motion_onnx(self, policy_path, filename)
+        #     attach_onnx_metadata(
+        #         _unwrap_to_isaac_env(self.env), wandb.run.name, path=policy_path, filename=filename
+        #     )
+        #     run_dir = os.path.normpath(policy_path)
+        #     wandb.save(os.path.join(run_dir, filename), base_path=run_dir)
 
 
 class MotionOnPolicyRunner(OnPolicyRunner):
@@ -30,13 +65,15 @@ class MotionOnPolicyRunner(OnPolicyRunner):
     def save(self, path: str, infos=None):
         """Save the model and training information."""
         super().save(path, infos)
-        if getattr(self.logger, "logger_type", None) == "wandb":
-            policy_path = path.split("model")[0]
-            filename = policy_path.split("/")[-2] + ".onnx"
-            # Use built-in export method for rsl_rl >= 4.0.0
-            self.export_policy_to_onnx(path=policy_path, filename=filename)
-            attach_onnx_metadata(self.env.unwrapped, wandb.run.name, path=policy_path, filename=filename)
-            wandb.save(policy_path + filename, base_path=os.path.dirname(policy_path))
+        if getattr(self, "logger_type", None) == "wandb" and wandb.run is not None:
+            # policy_path = path.split("model")[0]
+            # filename = policy_path.split("/")[-2] + ".onnx"
+            # _export_motion_onnx(self, policy_path, filename)
+            # attach_onnx_metadata(
+            #     _unwrap_to_isaac_env(self.env), wandb.run.name, path=policy_path, filename=filename
+            # )
+            # run_dir = os.path.normpath(policy_path)
+            # wandb.save(os.path.join(run_dir, filename), base_path=run_dir)
 
             # link the artifact registry to this run
             if self.registry_name is not None:

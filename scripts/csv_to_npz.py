@@ -65,7 +65,10 @@ from isaaclab.utils.math import axis_angle_from_quat, quat_conjugate, quat_mul, 
 # Pre-defined configs
 ##
 from whole_body_tracking.robots.g1 import G1_CYLINDER_CFG
-from whole_body_tracking.robots.t1 import T1_CFG
+try:
+    from whole_body_tracking.robots.t1 import T1_CFG
+except ModuleNotFoundError:
+    T1_CFG = None
 
 _T1_JOINT_NAMES = [
     "AAHead_yaw",
@@ -127,8 +130,9 @@ _G1_JOINT_NAMES = [
 
 _ROBOT_CFGS = {
     "unitree_g1": G1_CYLINDER_CFG,
-    "booster_t1": T1_CFG,
 }
+if T1_CFG is not None:
+    _ROBOT_CFGS["booster_t1"] = T1_CFG
 
 _ROBOT_JOINT_NAMES = {
     "unitree_g1": _G1_JOINT_NAMES,
@@ -444,6 +448,11 @@ def run_simulator(sim: SimulationContext, scene: InteractiveScene, joint_names: 
 
 def main():
     """Main function."""
+    if args_cli.robot == "booster_t1" and T1_CFG is None:
+        raise ModuleNotFoundError(
+            "booster_assets is required for booster_t1, but it is not installed in this environment."
+        )
+
     robot_cfg = _ROBOT_CFGS[args_cli.robot]
     joint_names = _ROBOT_JOINT_NAMES[args_cli.robot]
     print(f"[INFO]: Robot: {args_cli.robot} ({len(joint_names)} joints)")
