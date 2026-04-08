@@ -12,11 +12,15 @@
 #   --num-envs N            → train.py --num_envs N
 #   --task NAME             → train task (default: Tracking-Flat-T1-Wo-State-Estimation-v0)
 #   --log-project NAME      → W&B log project (default: Booster_t1)
-#   --registry-collection S → W&B registry collection (default: Booster_t1)
+#   --registry-collection S → used only with --use-wandb-registry (default: Booster_t1)
+#   --use-wandb-registry    → train loads motion as entity/<registry-collection>/<motion>
+#                            (W&B org registry path; often fails on personal/team entities with wandb 0.24+)
 #   --input-fps N           → csv_to_npz --input_fps (default: 30)
 #   --robot NAME            → csv_to_npz --robot (default: booster_t1)
-#   --wandb-project NAME    → csv_to_npz --wandb_project (default: Booster_t1)
+#   --wandb-project NAME    → csv_to_npz --wandb_project (default: Booster_t1); also default train artifact project
 #   --video                 → add --video to train.py
+#   --video-interval N      → train.py --video_interval (default: train.py default if omitted)
+#   --video-length N        → train.py --video_length (default: train.py default if omitted)
 #   --skip-npz              → skip Phase 1 (csv_to_npz), go straight to training
 #   -h, --help              → show this summary
 #
@@ -29,7 +33,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 usage() {
-  sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 # --- defaults from environment ---
@@ -46,6 +50,9 @@ NPZ_EXTRA_ARGS="${NPZ_EXTRA_ARGS:-}"
 ENV_CSV_DIR="${CSV_DIR:-}"
 ADD_VIDEO=0
 SKIP_NPZ=0
+USE_WANDB_REGISTRY=0
+VIDEO_INTERVAL=""
+VIDEO_LENGTH=""
 
 positional=()
 while [[ $# -gt 0 ]]; do
@@ -76,6 +83,14 @@ while [[ $# -gt 0 ]]; do
       WANDB_PROJECT_NPZ="$2"; shift 2 ;;
     --video)
       ADD_VIDEO=1; shift ;;
+    --video-interval|--video_interval)
+      [[ -n "${2:-}" ]] || { echo "error: $1 requires a value" >&2; exit 1; }
+      VIDEO_INTERVAL="$2"; shift 2 ;;
+    --video-length|--video_length)
+      [[ -n "${2:-}" ]] || { echo "error: $1 requires a value" >&2; exit 1; }
+      VIDEO_LENGTH="$2"; shift 2 ;;
+    --use-wandb-registry|--use_wandb_registry)
+      USE_WANDB_REGISTRY=1; shift ;;
     --skip-npz|--skip_npz)
       SKIP_NPZ=1; shift ;;
     -h|--help)
@@ -126,10 +141,14 @@ fi
 train_cmd=("${py_cmd[@]}" scripts/rsl_rl/train.py
   --task="$TASK"
   --headless
-  --video
   --logger wandb
   --log_project_name "$LOG_PROJECT"
 )
+if [[ "$ADD_VIDEO" -eq 1 ]]; then
+  train_cmd+=(--video)
+  [[ -n "$VIDEO_INTERVAL" ]] && train_cmd+=(--video_interval "$VIDEO_INTERVAL")
+  [[ -n "$VIDEO_LENGTH" ]]   && train_cmd+=(--video_length "$VIDEO_LENGTH")
+fi
 [[ -n "$NUM_ENVS" ]]       && train_cmd+=(--num_envs "$NUM_ENVS")
 [[ -n "$MAX_ITERATIONS" ]] && train_cmd+=(--max_iterations "$MAX_ITERATIONS")
 # shellcheck disable=SC2206
@@ -163,8 +182,13 @@ fi
 
 echo "========== Phase 2: training, ${#motions[@]} motion(s) =========="
 for motion in "${motions[@]}"; do
-  registry="${WANDB_ENTITY}/${REGISTRY_COLLECTION}/${motion}"
-  echo "---------- train: $motion (registry: $registry) ----------"
+  if [[ "$USE_WANDB_REGISTRY" -eq 1 ]]; then
+    registry="${WANDB_ENTITY}/${REGISTRY_COLLECTION}/${motion}"
+    echo "---------- train: $motion (W&B registry path: $registry) ----------"
+  else
+    registry="${WANDB_ENTITY}/${WANDB_PROJECT_NPZ}/${motion}"
+    echo "---------- train: $motion (W&B project artifact: $registry) ----------"
+  fi
   "${train_cmd[@]}" \
     --registry_name "$registry" \
     --experiment_name "$motion" \
