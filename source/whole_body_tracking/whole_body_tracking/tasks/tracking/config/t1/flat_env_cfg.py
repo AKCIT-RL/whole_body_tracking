@@ -22,7 +22,6 @@ class T1FlatEnvCfg(TrackingEnvCfg):
         self.actions.joint_pos.scale = T1_ACTION_SCALE
 
         self.commands.motion.anchor_body_name = "Trunk"
-        self.commands.motion.loop = False
         self.commands.motion.adaptive_kernel_size = 3
         # T1-specific friction (booster_train values — less aggressive than G1)
         self.events.physics_material.params["static_friction_range"] = (0.3, 0.6)
