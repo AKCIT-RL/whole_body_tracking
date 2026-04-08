@@ -103,22 +103,24 @@ def export_policy_as_jit(actor_module, path: str, filename: str) -> None:
     if not os.path.exists(path):
         os.makedirs(path, exist_ok=True)
 
-    actor_module = actor_module.cpu().eval()
+    actor_cpu = actor_module.cpu().eval()
 
     # Infer obs size from the first Linear layer
-    first_linear = next(m for m in actor_module.modules() if isinstance(m, torch.nn.Linear))
+    first_linear = next(m for m in actor_cpu.modules() if isinstance(m, torch.nn.Linear))
     obs_size = first_linear.in_features
 
-    # Wrapper so forward() calls act_inference (mean only, no std)
+    # Wrap normalizer + MLP directly so the JIT model accepts a plain flat tensor.
+    # MLPModel.forward() expects a TensorDict, so we bypass it and call the sub-modules.
     class _JitWrapper(torch.nn.Module):
-        def __init__(self, inner):
+        def __init__(self, normalizer, mlp):
             super().__init__()
-            self._inner = inner
+            self.obs_normalizer = normalizer
+            self.mlp = mlp
 
         def forward(self, obs: torch.Tensor) -> torch.Tensor:
-            return self._inner.act_inference(obs)
+            return self.mlp(self.obs_normalizer(obs))
 
-    wrapper = _JitWrapper(actor_module).eval()
+    wrapper = _JitWrapper(actor_cpu.obs_normalizer, actor_cpu.mlp).eval()
     dummy_obs = torch.zeros(1, obs_size)
     with torch.no_grad():
         traced = torch.jit.trace(wrapper, dummy_obs)
