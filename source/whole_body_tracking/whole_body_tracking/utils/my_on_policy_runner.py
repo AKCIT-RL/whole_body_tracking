@@ -1,5 +1,7 @@
+import io
 import os
 
+import torch
 from rsl_rl.env import VecEnv
 from rsl_rl.runners.on_policy_runner import OnPolicyRunner
 
@@ -41,12 +43,20 @@ class MotionOnPolicyRunner(OnPolicyRunner):
                 # T1 deploy uses TorchScript JIT (exported by play.py) — plain ONNX is fine for logging
                 self.export_policy_to_onnx(path=policy_path, filename=filename)
             else:
-                # G1: export motion-aware ONNX with time_step input and motion data outputs
-                actor_critic = type("_AC", (), {"actor": self.alg.actor, "is_recurrent": False})()
-                normalizer = getattr(self.alg.actor, "obs_normalizer", None)
+                # G1: export motion-aware ONNX with time_step input and motion data outputs.
+                # Use torch.save/load to get a clean copy of the actor, avoiding deepcopy
+                # failures caused by weight_norm non-leaf tensors in the training graph.
+                import io
+                buf = io.BytesIO()
+                torch.save(self.alg.actor, buf)
+                buf.seek(0)
+                actor_cpu = torch.load(buf, map_location="cpu", weights_only=False)
+                actor_cpu.eval()
+                actor_compat = type("_AC", (), {"actor": actor_cpu, "is_recurrent": False})()
+                normalizer = getattr(actor_cpu, "obs_normalizer", None)
                 export_motion_policy_as_onnx(
                     self.env.unwrapped,
-                    actor_critic,
+                    actor_compat,
                     normalizer=normalizer,
                     path=policy_path,
                     filename=filename,
