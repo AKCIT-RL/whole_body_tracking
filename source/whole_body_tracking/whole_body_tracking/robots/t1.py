@@ -1,15 +1,30 @@
 import isaaclab.sim as sim_utils
-from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 
-from booster_assets import BOOSTER_ASSETS_DIR
+import os as _os
+try:
+    from booster_assets import BOOSTER_ASSETS_DIR
+except ImportError:
+    BOOSTER_ASSETS_DIR = _os.environ.get("BOOSTER_ASSETS_DIR", "")
+    if not BOOSTER_ASSETS_DIR:
+        raise ImportError(
+            "booster_assets not installed and BOOSTER_ASSETS_DIR env var not set.\n"
+            "Fix:\n"
+            "  git clone https://github.com/BoosterRobotics/booster_assets\n"
+            "  pip install -e booster_assets\n"
+            "Or: export BOOSTER_ASSETS_DIR=/path/to/booster_assets"
+        )
 
-ARMATURE_6416 = 0.095625
-ARMATURE_4310 = 0.0282528
-ARMATURE_6408 = 0.0478125
-ARMATURE_4315 = 0.0339552
-ARMATURE_8112 = 0.0523908
-ARMATURE_8116 = 0.0636012
+from .booster_actuator import (
+    BoosterDelayedPDActuatorCfg,
+    BoosterJointE8112,
+    BoosterJointE6408,
+    BoosterJointE8116,
+    BoosterJointE4315,
+    BoosterJointE4310,
+    BoosterJointDM4310,
+    BoosterT1AnkleParaWrapperCfg,
+)
 
 T1_CFG = ArticulationCfg(
     spawn=sim_utils.UrdfFileCfg(
@@ -51,111 +66,59 @@ T1_CFG = ArticulationCfg(
     ),
     soft_joint_pos_limit_factor=0.9,
     actuators={
-        "legs": ImplicitActuatorCfg(
+        "legs": BoosterDelayedPDActuatorCfg(
+            max_delay=8,
+            min_delay=2,
             joint_names_expr=[
                 ".*_Hip_Pitch",
                 ".*_Hip_Roll",
                 ".*_Hip_Yaw",
                 ".*_Knee_Pitch",
             ],
-            effort_limit_sim={
-                ".*_Hip_Pitch": 45.0,
-                ".*_Hip_Roll": 25.0,
-                ".*_Hip_Yaw": 25.0,
-                ".*_Knee_Pitch": 60.0,
-            },
-            velocity_limit_sim={
-                ".*_Hip_Pitch": 16.76,
-                ".*_Hip_Roll": 12.57,
-                ".*_Hip_Yaw": 12.57,
-                ".*_Knee_Pitch": 12.57,
-            },
-            stiffness={
-                ".*_Hip_Pitch": 200.0,
-                ".*_Hip_Roll": 200.0,
-                ".*_Hip_Yaw": 200.0,
-                ".*_Knee_Pitch": 200.0,
-            },
-            damping={
-                ".*_Hip_Pitch": 5.0,
-                ".*_Hip_Roll": 5.0,
-                ".*_Hip_Yaw": 5.0,
-                ".*_Knee_Pitch": 5.0,
-            },
-            armature={
-                ".*_Hip_Pitch": ARMATURE_8112,
-                ".*_Hip_Roll": ARMATURE_6408,
-                ".*_Hip_Yaw": ARMATURE_6408,
-                ".*_Knee_Pitch": ARMATURE_8116,
+            booster_joint_cfgs={
+                ".*_Hip_Pitch": BoosterJointE8112(),   # 96 Nm, 16.76 rad/s, Kp≈207, Kd≈13.2
+                ".*_Hip_Roll": BoosterJointE6408(),    # 68 Nm, 14.66 rad/s, Kp≈189, Kd≈12.0
+                ".*_Hip_Yaw": BoosterJointE6408(),     # 68 Nm, 14.66 rad/s, Kp≈189, Kd≈12.0
+                ".*_Knee_Pitch": BoosterJointE8116(),  # 130 Nm, 14.66 rad/s, Kp≈251, Kd≈16.0
             },
         ),
-        "feet": ImplicitActuatorCfg(
+        "feet": BoosterDelayedPDActuatorCfg(
+            max_delay=8,
+            min_delay=2,
             joint_names_expr=[".*_Ankle_Pitch", ".*_Ankle_Roll"],
-            effort_limit_sim={
-                ".*_Ankle_Pitch": 24.0,
-                ".*_Ankle_Roll": 15.0,
+            booster_joint_cfgs={
+                ".*_Ankle_Pitch": BoosterT1AnkleParaWrapperCfg(
+                    base_joint_cfg=BoosterJointE4315(),
+                    serial_index=0,
+                ),  # 76 Nm, 12.57 rad/s, Kp≈268, Kd≈17.1
+                ".*_Ankle_Roll": BoosterT1AnkleParaWrapperCfg(
+                    base_joint_cfg=BoosterJointE4315(),
+                    serial_index=1,
+                ),  # 76 Nm, 12.57 rad/s, Kp≈268, Kd≈17.1
             },
-            velocity_limit_sim={
-                ".*_Ankle_Pitch": 18.8,
-                ".*_Ankle_Roll": 12.4,
-            },
-            stiffness=50.0,
-            damping=1.0,
-            armature=2.0 * ARMATURE_4315,
         ),
-        "waist": ImplicitActuatorCfg(
+        "waist": BoosterDelayedPDActuatorCfg(
+            max_delay=8,
+            min_delay=2,
             joint_names_expr=["Waist"],
-            effort_limit_sim=25.0,
-            velocity_limit_sim=12.57,
-            stiffness=200.0,
-            damping=5.0,
-            armature=ARMATURE_6408,
+            booster_joint_cfgs=BoosterJointE6408(),    # 68 Nm, 14.66 rad/s, Kp≈189, Kd≈12.0
         ),
-        "arms": ImplicitActuatorCfg(
+        "arms": BoosterDelayedPDActuatorCfg(
+            max_delay=8,
+            min_delay=2,
             joint_names_expr=[
                 ".*_Shoulder_Pitch",
                 ".*_Shoulder_Roll",
                 ".*_Elbow_Pitch",
                 ".*_Elbow_Yaw",
             ],
-            effort_limit_sim={
-                ".*_Shoulder_Pitch": 18.0,
-                ".*_Shoulder_Roll": 18.0,
-                ".*_Elbow_Pitch": 18.0,
-                ".*_Elbow_Yaw": 18.0,
-            },
-            velocity_limit_sim={
-                ".*_Shoulder_Pitch": 7.33,
-                ".*_Shoulder_Roll": 7.33,
-                ".*_Elbow_Pitch": 7.33,
-                ".*_Elbow_Yaw": 7.33,
-            },
-            stiffness={
-                ".*_Shoulder_Pitch": 50.0,
-                ".*_Shoulder_Roll": 50.0,
-                ".*_Elbow_Pitch": 50.0,
-                ".*_Elbow_Yaw": 50.0,
-            },
-            damping={
-                ".*_Shoulder_Pitch": 1.0,
-                ".*_Shoulder_Roll": 1.0,
-                ".*_Elbow_Pitch": 1.0,
-                ".*_Elbow_Yaw": 1.0,
-            },
-            armature={
-                ".*_Shoulder_Pitch": ARMATURE_4310,
-                ".*_Shoulder_Roll": ARMATURE_4310,
-                ".*_Elbow_Pitch": ARMATURE_4310,
-                ".*_Elbow_Yaw": ARMATURE_4310,
-            },
+            booster_joint_cfgs=BoosterJointE4310(),    # 38.3 Nm, 17.59 rad/s, Kp≈111, Kd≈7.1
         ),
-        "head": ImplicitActuatorCfg(
+        "head": BoosterDelayedPDActuatorCfg(
+            max_delay=8,
+            min_delay=2,
             joint_names_expr=[".*Head.*"],
-            effort_limit_sim=7.0,
-            velocity_limit_sim=20.0,
-            stiffness=10.0,
-            damping=1.0,
-            armature=0.001,
+            booster_joint_cfgs=BoosterJointDM4310(),   # 7 Nm, 12.57 rad/s, Kp≈7.1, Kd≈0.45
         ),
     },
 )
