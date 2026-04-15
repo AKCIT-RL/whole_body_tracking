@@ -54,6 +54,16 @@ tar -xzf unitree_description.tar.gz -C source/whole_body_tracking/whole_body_tra
 rm unitree_description.tar.gz
 ```
 
+- **(T1 only)** Download Booster robot assets (URDFs + meshes) and install the Python helper.
+  Skip this step if you only plan to train G1.
+
+```bash
+git clone --depth 1 https://github.com/BoosterRobotics/booster_assets
+python -m pip install -e booster_assets
+```
+
+> **Docker users:** this step is handled automatically in the `Dockerfile` — no manual action needed.
+
 - Using a Python interpreter that has Isaac Lab installed, install the library
 
 ```bash
