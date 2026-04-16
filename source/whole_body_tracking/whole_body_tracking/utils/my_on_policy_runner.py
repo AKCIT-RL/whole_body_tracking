@@ -31,6 +31,34 @@ class MotionOnPolicyRunner(OnPolicyRunner):
         super().__init__(env, train_cfg, log_dir, device)
         self.registry_name = registry_name
 
+    def _get_alg_actor(self):
+        """Return the MLP actor used for obs -> actions (not the full ActorCritic wrapper).
+
+        Newer rsl_rl exposes ``get_policy()`` as ``ActorCritic``; its ``forward`` is not ``(obs)``.
+        The motion ONNX exporter expects the inner ``MLPModel`` (``ActorCritic.actor`` or ``PPO.actor``).
+        """
+        alg = self.alg
+        direct = getattr(alg, "actor", None)
+        if direct is not None:
+            return direct
+
+        policy = None
+        get_policy = getattr(alg, "get_policy", None)
+        if callable(get_policy):
+            policy = get_policy()
+        if policy is None:
+            policy = getattr(alg, "policy", None)
+        if policy is None:
+            raise AttributeError(
+                "Cannot find actor/policy on algorithm: expected .actor, .get_policy(), or .policy on "
+                f"{type(alg).__name__}"
+            )
+
+        inner = getattr(policy, "actor", None)
+        if inner is not None:
+            return inner
+        return policy
+
     def _should_run_wandb_onnx_hooks(self) -> bool:
         """rsl_rl versions differ: logger may be missing or logger_type only on internal Logger after init_logging_writer."""
         log = getattr(self, "logger", None) or getattr(self, "_logger", None)
@@ -60,7 +88,7 @@ class MotionOnPolicyRunner(OnPolicyRunner):
             # Use torch.save/load to get a clean copy of the actor, avoiding deepcopy
             # failures caused by weight_norm non-leaf tensors in the training graph.
             buf = io.BytesIO()
-            torch.save(self.alg.actor, buf)
+            torch.save(self._get_alg_actor(), buf)
             buf.seek(0)
             actor_cpu = torch.load(buf, map_location="cpu", weights_only=False)
             actor_cpu.eval()
