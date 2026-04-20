@@ -13,7 +13,12 @@ RUN curl -L -o unitree_description.tar.gz \
 
 # Download Booster robot assets (URDFs, meshes) and install Python helper
 RUN git clone --depth 1 https://github.com/BoosterRobotics/booster_assets /workspace/booster_assets && \
+    # Ensures runtime can locate URDF/meshes even if python can't import the helper for some reason.
+    /bin/bash -c 'export BOOSTER_ASSETS_DIR=/workspace/booster_assets && test -f "$BOOSTER_ASSETS_DIR/robots/T1/T1_23dof.urdf"' && \
     /isaac-sim/python.sh -m pip install -e /workspace/booster_assets
+
+# Default path for the T1 URDF/meshes.
+ENV BOOSTER_ASSETS_DIR=/workspace/booster_assets
 
 # Install whole_body_tracking extension (uses Isaac Sim Python: /isaac-sim/python.sh)
 RUN /isaac-sim/python.sh -m pip install -e source/whole_body_tracking
