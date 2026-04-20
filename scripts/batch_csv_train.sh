@@ -16,12 +16,14 @@
 #   --input-fps N           → csv_to_npz --input_fps (default: 30)
 #   --robot NAME            → csv_to_npz --robot (default: booster_t1)
 #   --wandb-project NAME    → csv_to_npz --wandb_project (default: Booster_t1)
-#   --video                 → add --video to train.py
+#   --video                 → train.py --video (this script always passes --video for phase 2)
+#   --video-interval N      → train.py --video_interval N (default: from train.py, e.g. 2000)
+#   --video-length N        → train.py --video_length N (default: from train.py, e.g. 200)
 #   --skip-npz              → skip Phase 1 (csv_to_npz), go straight to training
 #   -h, --help              → show this summary
 #
 # Environment (still supported): INPUT_FPS, TASK, LOG_PROJECT, NUM_ENVS, MAX_ITERATIONS,
-# TRAIN_EXTRA_ARGS, NPZ_EXTRA_ARGS, CSV_DIR, WANDB_ENTITY, PYTHON
+# VIDEO_INTERVAL, VIDEO_LENGTH, TRAIN_EXTRA_ARGS, NPZ_EXTRA_ARGS, CSV_DIR, WANDB_ENTITY, PYTHON
 
 set -euo pipefail
 
@@ -29,7 +31,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 usage() {
-  sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 # --- defaults from environment ---
@@ -45,6 +47,8 @@ TRAIN_EXTRA_ARGS="${TRAIN_EXTRA_ARGS:-}"
 NPZ_EXTRA_ARGS="${NPZ_EXTRA_ARGS:-}"
 ENV_CSV_DIR="${CSV_DIR:-}"
 ADD_VIDEO=0
+VIDEO_INTERVAL="${VIDEO_INTERVAL:-}"
+VIDEO_LENGTH="${VIDEO_LENGTH:-}"
 SKIP_NPZ=0
 
 positional=()
@@ -76,6 +80,12 @@ while [[ $# -gt 0 ]]; do
       WANDB_PROJECT_NPZ="$2"; shift 2 ;;
     --video)
       ADD_VIDEO=1; shift ;;
+    --video-interval|--video_interval)
+      [[ -n "${2:-}" ]] || { echo "error: $1 requires a value" >&2; exit 1; }
+      VIDEO_INTERVAL="$2"; shift 2 ;;
+    --video-length|--video_length)
+      [[ -n "${2:-}" ]] || { echo "error: $1 requires a value" >&2; exit 1; }
+      VIDEO_LENGTH="$2"; shift 2 ;;
     --skip-npz|--skip_npz)
       SKIP_NPZ=1; shift ;;
     -h|--help)
@@ -90,6 +100,12 @@ while [[ $# -gt 0 ]]; do
       positional+=("$1"); shift ;;
   esac
 done
+
+# When log + NPZ projects match a non-default name, use it as the W&B model-registry collection
+# for --registry_name (avoids uploading to G1_training but training against Booster_t1).
+if [[ "${REGISTRY_COLLECTION}" == "Booster_t1" && "${LOG_PROJECT}" == "${WANDB_PROJECT_NPZ}" && "${LOG_PROJECT}" != "Booster_t1" ]]; then
+  REGISTRY_COLLECTION="${LOG_PROJECT}"
+fi
 
 if [[ ${#positional[@]} -gt 1 ]]; then
   echo "error: at most one CSV_DIR argument allowed; got: ${positional[*]}" >&2; exit 1
@@ -108,6 +124,24 @@ fi
 if [[ ! -d "$CSV_DIR" ]]; then
   echo "error: CSV directory not found: $CSV_DIR" >&2; exit 1
 fi
+
+# Bind-mounting the repo over /workspace/whole_body_tracking hides URDFs baked into the Docker image;
+# download Unitree G1 assets into source/.../assets if missing.
+ensure_unitree_g1_assets() {
+  [[ "${ROBOT}" == unitree_g1 ]] || return 0
+  local assets_dir="$REPO_ROOT/source/whole_body_tracking/whole_body_tracking/assets"
+  local urdf="$assets_dir/unitree_description/urdf/g1/main.urdf"
+  [[ -f "$urdf" ]] && return 0
+  echo "========== Fetching Unitree G1 URDF (not found at $urdf) =========="
+  mkdir -p "$assets_dir"
+  local tgz
+  tgz="$(mktemp /tmp/unitree_desc.XXXXXX.tar.gz)"
+  curl -fsSL -o "$tgz" https://storage.googleapis.com/qiayuanl_robot_descriptions/unitree_description.tar.gz
+  tar -xzf "$tgz" -C "$assets_dir"
+  rm -f "$tgz"
+  [[ -f "$urdf" ]] || { echo "error: expected URDF after extract: $urdf" >&2; exit 1; }
+}
+ensure_unitree_g1_assets
 
 mapfile -t csv_files < <(find "$CSV_DIR" -maxdepth 1 -type f -name "${ROBOT}_*.csv" | sort)
 
@@ -132,6 +166,8 @@ train_cmd=("${py_cmd[@]}" scripts/rsl_rl/train.py
 )
 [[ -n "$NUM_ENVS" ]]       && train_cmd+=(--num_envs "$NUM_ENVS")
 [[ -n "$MAX_ITERATIONS" ]] && train_cmd+=(--max_iterations "$MAX_ITERATIONS")
+[[ -n "$VIDEO_INTERVAL" ]] && train_cmd+=(--video_interval "$VIDEO_INTERVAL")
+[[ -n "$VIDEO_LENGTH" ]]   && train_cmd+=(--video_length "$VIDEO_LENGTH")
 # shellcheck disable=SC2206
 [[ -n "$TRAIN_EXTRA_ARGS" ]] && train_cmd+=($TRAIN_EXTRA_ARGS)
 

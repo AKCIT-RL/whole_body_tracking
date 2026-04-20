@@ -53,7 +53,8 @@ from isaaclab.envs import (
     multi_agent_to_single_agent,
 )
 from isaaclab.utils.dict import print_dict
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg
+from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
+from rsl_rl_compat import handle_deprecated_rsl_rl_cfg
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
@@ -63,6 +64,7 @@ installed_version = metadata.version("rsl-rl-lib")
 # Import extensions to set up environment tasks
 import whole_body_tracking.tasks  # noqa: F401
 from whole_body_tracking.utils.exporter import attach_onnx_metadata, export_motion_policy_as_onnx, export_policy_as_jit
+from whole_body_tracking.utils.my_on_policy_runner import _algorithm_actor_module
 
 
 @hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
@@ -175,7 +177,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         run_label = agent_cfg.run_name if agent_cfg.run_name else "local"
     export_stem = f"{run_label}_{checkpoint_stem}"
 
-    actor_module = ppo_runner.alg.actor
+    actor_module = _algorithm_actor_module(ppo_runner.alg)
     normalizer = getattr(actor_module, "obs_normalizer", None)
 
     is_t1_task = "T1" in args_cli.task
@@ -216,7 +218,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             print(f"[WARN] Failed to export ONNX model: {e}")
     # Ensure actor (and its normalizer buffers) are on the simulation device after export.
     # export_policy_as_jit calls actor_module.cpu() as a side effect, which moves buffers to CPU.
-    ppo_runner.alg.actor.to(env.unwrapped.device)
+    _algorithm_actor_module(ppo_runner.alg).to(env.unwrapped.device)
 
     # reset environment
     obs_result = env.get_observations()
