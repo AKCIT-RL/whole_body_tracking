@@ -8,6 +8,8 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - ACCEPT_EULA=Y
       - PRIVACY_CONSENT=Y
+      - WANDB_ENTITY=do-you-still-need-mocap
+      - WANDB_API_KEY=${WANDB_API_KEY}
     volumes:
       - isaac-cache-kit:/isaac-sim/kit/cache
       - isaac-cache-ov:/root/.cache/ov

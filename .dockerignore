@@ -5,3 +5,21 @@ __pycache__
 .pytest_cache
 .coverage
 *.egg-info
+
+# cloned inside the Dockerfile from the fork — don't send to build context
+IsaacLab/
+
+# symlink to external path — assets are downloaded inside Docker via RUN curl
+source/whole_body_tracking/whole_body_tracking/assets/unitree_description
+
+# runtime artifacts — not needed in the image
+logs/
+wandb/
+artifacts/
+outputs/
+output/
+venv/
+booster_assets/
+*.npz
+nohup.out
+tea_debug.log
