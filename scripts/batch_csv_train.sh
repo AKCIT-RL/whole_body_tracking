@@ -35,10 +35,10 @@ usage() {
 # --- defaults from environment ---
 INPUT_FPS="${INPUT_FPS:-30}"
 TASK="${TASK:-Tracking-Flat-T1-Wo-State-Estimation-v0}"
-LOG_PROJECT="${LOG_PROJECT:-Booster_t1}"
-REGISTRY_COLLECTION="${REGISTRY_COLLECTION:-Booster_t1}"
+LOG_PROJECT="${LOG_PROJECT:-AIBrasil_t1}"
+REGISTRY_COLLECTION="${REGISTRY_COLLECTION:-AIBrasil_t1}"
 ROBOT="${ROBOT:-booster_t1}"
-WANDB_PROJECT_NPZ="${WANDB_PROJECT_NPZ:-Booster_t1}"
+WANDB_PROJECT_NPZ="${WANDB_PROJECT_NPZ:-AIBrasil_t1}"
 NUM_ENVS="${NUM_ENVS:-}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-}"
 TRAIN_EXTRA_ARGS="${TRAIN_EXTRA_ARGS:-}"
@@ -46,6 +46,20 @@ NPZ_EXTRA_ARGS="${NPZ_EXTRA_ARGS:-}"
 ENV_CSV_DIR="${CSV_DIR:-}"
 ADD_VIDEO=0
 SKIP_NPZ=0
+
+# INPUT_FPS="${INPUT_FPS:-30}"
+# TASK="${TASK:-Tracking-Flat-G1-v0}"
+# LOG_PROJECT="${LOG_PROJECT:-videos_G1_engemulti}"
+# REGISTRY_COLLECTION="${REGISTRY_COLLECTION:-videos_G1_engemulti}"
+# ROBOT="${ROBOT:-unitree_g1}"
+# WANDB_PROJECT_NPZ="${WANDB_PROJECT_NPZ:-videos_G1_engemulti}"
+# NUM_ENVS="${NUM_ENVS:-}"
+# MAX_ITERATIONS="${MAX_ITERATIONS:-}"
+# TRAIN_EXTRA_ARGS="${TRAIN_EXTRA_ARGS:-}"
+# NPZ_EXTRA_ARGS="${NPZ_EXTRA_ARGS:-}"
+# ENV_CSV_DIR="${CSV_DIR:-}"
+# ADD_VIDEO=0
+# SKIP_NPZ=0
 
 positional=()
 while [[ $# -gt 0 ]]; do
@@ -109,7 +123,23 @@ if [[ ! -d "$CSV_DIR" ]]; then
   echo "error: CSV directory not found: $CSV_DIR" >&2; exit 1
 fi
 
-mapfile -t csv_files < <(find "$CSV_DIR" -maxdepth 1 -type f -name "${ROBOT}_*.csv" | sort)
+# mapfile -t csv_files < <(find "$CSV_DIR" -maxdepth 1 -type f -name "${ROBOT}_*.csv" | sort)
+
+# to choose specific files instead of all(e.g. name in walk run jump)
+# mapfile -t csv_files < <(
+#   for name in  paradinha trivela_side get_Down_get_Up run one_foot_balance; do
+#     f="$CSV_DIR/${ROBOT}_${name}.csv"
+#     [[ -f "$f" ]] && echo "$f"
+#   done
+# )
+
+# to choose specific files instead of all(e.g. name in walk run jump)
+mapfile -t csv_files < <(
+  for name in  paradinha_altura chuta_para; do
+    f="$CSV_DIR/${ROBOT}_${name}.csv"
+    [[ -f "$f" ]] && echo "$f"
+  done
+)
 
 if [[ ${#csv_files[@]} -eq 0 ]]; then
   echo "error: no ${ROBOT}_*.csv files in $CSV_DIR" >&2; exit 1
@@ -140,6 +170,20 @@ for csv in "${csv_files[@]}"; do
   motions+=("$(basename "$csv" .csv)")
 done
 
+npz_exists_on_wandb() {
+  local motion="$1"
+  "${py_cmd[@]}" - <<PYEOF 2>/dev/null
+import sys
+try:
+    import wandb
+    api = wandb.Api(timeout=30)
+    api.artifact("${WANDB_ENTITY}/${WANDB_PROJECT_NPZ}/${motion}:latest")
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+PYEOF
+}
+
 if [[ "$SKIP_NPZ" -eq 1 ]]; then
   echo "========== Phase 1: skipped (--skip-npz) =========="
 else
@@ -147,6 +191,10 @@ else
   for csv in "${csv_files[@]}"; do
     motion="$(basename "$csv" .csv)"
     echo "---------- csv_to_npz: $motion ----------"
+    if npz_exists_on_wandb "$motion"; then
+      echo "  → '$motion' already exists on W&B, skipping upload"
+      continue
+    fi
     npz_cmd=("${py_cmd[@]}" scripts/csv_to_npz.py
       --input_file "$csv"
       --input_fps "$INPUT_FPS"

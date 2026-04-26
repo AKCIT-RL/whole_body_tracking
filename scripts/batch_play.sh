@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Roda play.py para múltiplas runs do W&B.
-# O play.py exporta os modelos em ./logs/rsl_rl/temp/exported/
-# Este script move os arquivos exportados para output/politicas/<nome>/ após cada run.
+# Runs play.py for multiple W&B runs.
+# play.py saves exports to logs/rsl_rl/temp/exported/ automatically.
 #
-# Uso (a partir da raiz do repo):
+# Usage (from repo root):
 #   bash scripts/batch_play.sh
+#
+# RUNS format: "wandb_path|task|name"
+# Task examples: Tracking-Flat-G1-Wo-State-Estimation-v0
+#                Tracking-Flat-T1-Wo-State-Estimation-v0
 
 set -euo pipefail
 
@@ -17,43 +20,54 @@ else
   py_cmd=python
 fi
 
-# formato: "wandb_path|nome_pasta"
+# format: "wandb_path|task|name"
 RUNS=(
-  "gabrielruotolo-federal-univesity-of-goias/Booster_t1/e8g8xo1r|trote_medio_vertical"
-  "gabrielruotolo-federal-univesity-of-goias/Booster_t1/6dqj81se|trivela"
-  "gabrielruotolo-federal-univesity-of-goias/Booster_t1/nlfvc6rz|pedalada_newcut"
-  "gabrielruotolo-federal-univesity-of-goias/Booster_t1/klah13pq|neyPenalti_cut"
-  "gabrielruotolo-federal-univesity-of-goias/Booster_t1/4xqkzas4|pedalada_lenta"
-  "gabrielruotolo-federal-univesity-of-goias/Booster_t1/xbvzf36g|penaltiNeymar"
+  # "do-you-still-need-mocap/videos_t1/ik454x51|Tracking-Flat-T1-Wo-State-Estimation-v0"
+  # "do-you-still-need-mocap/G1_vimos/zrey8ttz|Tracking-Flat-G1-Wo-State-Estimation-v0|macarena"
+  # "do-you-still-need-mocap/G1_vimos/7zbf3r8l|Tracking-Flat-G1-Wo-State-Estimation-v0|boxe"
+  # "do-you-still-need-mocap/G1_vimos/z6aehhwy|Tracking-Flat-G1-Wo-State-Estimation-v0|aceno"
+  # "do-you-still-need-mocap/videos_t1_engemulti/vsoju11x|Tracking-Flat-T1-Wo-State-Estimation-v0|jump"
+  # "do-you-still-need-mocap/videos_t1_engemulti/a4iqoltn|Tracking-Flat-T1-Wo-State-Estimation-v0|jumping_puddle"
+  # "do-you-still-need-mocap/videos_t1_engemulti/ko8m1kxg|Tracking-Flat-T1-Wo-State-Estimation-v0|like_jennie"
+  # "do-you-still-need-mocap/videos_t1_engemulti/c5u0gpcc|Tracking-Flat-T1-Wo-State-Estimation-v0|one_foot_balance"
+  # "do-you-still-need-mocap/videos_t1_engemulti/7u08oshc|Tracking-Flat-T1-Wo-State-Estimation-v0|paradinha"
+  # "do-you-still-need-mocap/videos_t1_engemulti/mifbo87x|Tracking-Flat-T1-Wo-State-Estimation-v0|pedalada"
+
+
+  # "do-you-still-need-mocap/AIBrasil_t1/1kp6np2j|Tracking-Flat-T1-Wo-State-Estimation-v0|trivela_side"
+  # "do-you-still-need-mocap/AIBrasil_t1/jxpvcwfv|Tracking-Flat-T1-Wo-State-Estimation-v0|paradinha_altura"
+  "do-you-still-need-mocap/AIBrasil_t1/7xhp5chq|Tracking-Flat-T1-Wo-State-Estimation-v0|chuta_para"
 )
 
-TEMP_EXPORT="$REPO_ROOT/logs/rsl_rl/temp/exported"
-
 for entry in "${RUNS[@]}"; do
-  run="${entry%%|*}"
-  name="${entry##*|}"
-  out_dir="$REPO_ROOT/output/politicas/$name"
-  mkdir -p "$out_dir"
+  IFS='|' read -r run task name <<< "$entry"
 
-  # Limpa exported anterior para não misturar arquivos de runs diferentes
-  rm -rf "$TEMP_EXPORT"
-
-  echo "========== play: $name ($run) =========="
+  echo "========== play: $run (task: $task, export: $name) =========="
   $py_cmd scripts/rsl_rl/play.py \
-    --task=Tracking-Flat-T1-Wo-State-Estimation-v0 \
+    --task="$task" \
     --num_envs 1 \
     --wandb_path "$run" \
     --headless \
     --video \
     --video_length 1
 
-  # Move os arquivos exportados para a pasta desta run
-  if [[ -d "$TEMP_EXPORT" ]]; then
-    mv "$TEMP_EXPORT"/* "$out_dir"/
-    echo "[INFO] Arquivos exportados salvos em: $out_dir"
+  # infer robot prefix and export extension from task
+  if [[ "$task" == *T1* ]]; then
+    robot="booster_t1"; ext="pt"
   else
-    echo "[WARN] Nenhum arquivo exportado encontrado em $TEMP_EXPORT"
+    robot="unitree_g1"; ext="onnx"
+  fi
+
+  export_dir="$REPO_ROOT/logs/rsl_rl/temp/exported"
+  run_id="${run##*/}"  # last segment of wandb path, e.g. zrey8ttz
+  latest=$(ls "$export_dir"/${run_id}_*."$ext" 2>/dev/null | head -1 || true)
+  if [[ -n "$latest" ]]; then
+    target="$export_dir/${robot}_${name}.${ext}"
+    mv "$latest" "$target"
+    echo "  → saved as $target"
+  else
+    echo "  [WARN] no export found matching ${run_id}_*.${ext} in $export_dir"
   fi
 done
 
-echo "========== batch_play finalizado =========="
+echo "========== batch_play done =========="
