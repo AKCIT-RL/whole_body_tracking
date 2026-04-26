@@ -157,16 +157,44 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         if isinstance(model_dict, dict) and "class_name" not in model_dict:
             model_dict["class_name"] = "MLPModel"
     ppo_runner = OnPolicyRunner(env, agent_cfg_dict, log_dir=None, device=agent_cfg.device)
-    ppo_runner.load(resume_path)
+
+    # Compatibility: convert legacy rsl_rl checkpoint format (model_state_dict)
+    # to the new split format (actor_state_dict / critic_state_dict).
+    _ckpt = torch.load(resume_path, map_location="cpu", weights_only=False)
+    _legacy = "model_state_dict" in _ckpt and "actor_state_dict" not in _ckpt
+    # Capture original path for export dir/stem BEFORE possible tempfile substitution.
+    _original_resume_path = resume_path
+    if _legacy:
+        import tempfile
+        sd = _ckpt["model_state_dict"]
+        actor_sd = {"mlp." + k[len("actor."):]: v for k, v in sd.items() if k.startswith("actor.")}
+        critic_sd = {"mlp." + k[len("critic."):]: v for k, v in sd.items() if k.startswith("critic.")}
+        if "std" in sd:
+            actor_sd["distribution.std_param"] = sd["std"]
+        if "obs_norm_state_dict" in _ckpt:
+            for k, v in _ckpt["obs_norm_state_dict"].items():
+                actor_sd[f"obs_normalizer.{k}"] = v
+        if "privileged_obs_norm_state_dict" in _ckpt:
+            for k, v in _ckpt["privileged_obs_norm_state_dict"].items():
+                critic_sd[f"obs_normalizer.{k}"] = v
+        _ckpt["actor_state_dict"] = actor_sd
+        _ckpt["critic_state_dict"] = critic_sd
+        _tmp = tempfile.mktemp(suffix=".pt")
+        torch.save(_ckpt, _tmp)
+        resume_path = _tmp
+
+    # strict=False for legacy checkpoints: obs-space may differ between old and new configs
+    ppo_runner.load(resume_path, strict=not _legacy)
 
     # obtain the trained policy for inference
     policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
 
     # export policy to onnx (G1) or jit (T1)
-    export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
+    # Use original resume_path so export lands next to the real checkpoint, not in /tmp/.
+    export_model_dir = os.path.join(os.path.dirname(_original_resume_path), "exported")
 
     # Derive a unique filename from run name + checkpoint to avoid overwriting.
-    checkpoint_stem = os.path.splitext(os.path.basename(resume_path))[0]  # e.g. model_14000
+    checkpoint_stem = os.path.splitext(os.path.basename(_original_resume_path))[0]  # e.g. model_14000
     if args_cli.wandb_path:
         run_label = args_cli.wandb_path.rstrip("/").split("/")[-1]         # last segment of wandb path
         if run_label.startswith("model_"):                                 # it's a file, use parent run id
