@@ -1,7 +1,7 @@
 # BeyondMimic Motion Tracking Code
 
 [![IsaacSim](https://img.shields.io/badge/IsaacSim-4.5.0-silver.svg)](https://docs.omniverse.nvidia.com/isaacsim/latest/overview.html)
-[![Isaac Lab](https://img.shields.io/badge/IsaacLab-2.1.0-silver)](https://isaac-sim.github.io/IsaacLab)
+[![Isaac Lab](https://img.shields.io/badge/IsaacLab-2.3.2-silver)](https://github.com/AKCIT-RL/IsaacLab/tree/whole_body_tracking)
 [![Python](https://img.shields.io/badge/python-3.10-blue.svg)](https://docs.python.org/3/whatsnew/3.10.html)
 [![Linux platform](https://img.shields.io/badge/platform-linux--64-orange.svg)](https://releases.ubuntu.com/20.04/)
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://pre-commit.com/)
@@ -29,45 +29,101 @@ the [motion_tracking_controller](https://github.com/HybridRobotics/motion_tracki
 
 ## Installation
 
-- Install Isaac Lab v2.1.0 by following
-  the [installation guide](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/index.html). We recommend
-  using the conda installation as it simplifies calling Python scripts from the terminal.
+> **Note:** The official Isaac Lab pip installation guide currently targets Isaac Sim 5.1
+> (Python 3.11, CUDA 13.0) and is **incompatible** with this repo. Follow the steps below exactly.
 
-- Clone this repository separately from the Isaac Lab installation (i.e., outside the `IsaacLab` directory):
+### Tested versions
+
+| Package | Version |
+|---------|---------|
+| Python | 3.10 |
+| Isaac Sim | 4.5.0.0 |
+| Isaac Lab | 2.3.2 (patched fork) |
+| PyTorch | 2.11.0+cu128 |
+| CUDA | 12.8 |
+| rsl-rl-lib | 5.0.1 |
+
+> **CUDA warning:** always use `+cu128` PyTorch builds. `+cu130` requires driver support for
+> CUDA 13.0 — most RTX-series servers (driver 570.x) top out at CUDA 12.8 and will crash with
+> `RuntimeError: The NVIDIA driver on your system is too old`.
+
+### 1. Create conda environment
 
 ```bash
-# Option 1: SSH
-git clone git@github.com:HybridRobotics/whole_body_tracking.git
-
-# Option 2: HTTPS
-git clone https://github.com/HybridRobotics/whole_body_tracking.git
+conda create -n env_isaaclab python=3.10 -y
+conda activate env_isaaclab
 ```
 
-- Pull the robot description files from GCS
+### 2. Install Isaac Sim 4.5.0
 
 ```bash
-# Enter the repository
+pip install "isaacsim[all,extscache]==4.5.0.0" --extra-index-url https://pypi.nvidia.com
+```
+
+> Initial launch takes 10–15 min to cache extensions. This is normal.
+
+### 3. Install PyTorch (CUDA 12.8)
+
+```bash
+pip install torch==2.11.0+cu128 torchvision==0.26.0+cu128 \
+    --index-url https://download.pytorch.org/whl/cu128
+pip install pillow==11.3.0
+```
+
+### 4. Clone this repository
+
+```bash
+# SSH
+git clone git@github.com:HybridRobotics/whole_body_tracking.git
+# HTTPS
+git clone https://github.com/HybridRobotics/whole_body_tracking.git
+
 cd whole_body_tracking
-# Rename all occurrences of whole_body_tracking (in files/directories) to your_fancy_extension_name
-curl -L -o unitree_description.tar.gz https://storage.googleapis.com/qiayuanl_robot_descriptions/unitree_description.tar.gz && \
-tar -xzf unitree_description.tar.gz -C source/whole_body_tracking/whole_body_tracking/assets/ && \
+```
+
+### 5. Clone and install Isaac Lab (patched fork)
+
+We maintain a fork of Isaac Lab at v2.3.2 with patches required for Isaac Sim 4.5 headless
+compatibility. Clone it **inside** the repository:
+
+```bash
+git clone -b whole_body_tracking https://github.com/AKCIT-RL/IsaacLab.git
+
+pip install -e IsaacLab/source/isaaclab --no-deps
+pip install -e IsaacLab/source/isaaclab_assets --no-deps
+pip install -e IsaacLab/source/isaaclab_tasks --no-deps
+pip install -e IsaacLab/source/isaaclab_mimic --no-deps
+pip install -e IsaacLab/source/isaaclab_rl --no-deps
+```
+
+> `--no-deps` prevents pip from overriding the torch/isaacsim versions installed above.
+
+### 6. Pull robot description files
+
+```bash
+curl -L -o unitree_description.tar.gz \
+    https://storage.googleapis.com/qiayuanl_robot_descriptions/unitree_description.tar.gz && \
+tar -xzf unitree_description.tar.gz \
+    -C source/whole_body_tracking/whole_body_tracking/assets/ && \
 rm unitree_description.tar.gz
 ```
 
-- **(T1 only)** Download Booster robot assets (URDFs + meshes) and install the Python helper.
-  Skip this step if you only plan to train G1.
+### 7. (T1 only) Install Booster robot assets
+
+Download Booster robot assets (URDFs + meshes) and install the Python helper.
+Skip this step if you only plan to train G1.
 
 ```bash
 git clone --depth 1 https://github.com/BoosterRobotics/booster_assets
-python -m pip install -e booster_assets
+pip install -e booster_assets
 ```
 
-> **Docker users:** this step is handled automatically in the `Dockerfile` — no manual action needed.
+> **Docker users:** steps 6 and 7 are handled automatically in the `Dockerfile`.
 
-- Using a Python interpreter that has Isaac Lab installed, install the library
+### 8. Install this library
 
 ```bash
-python -m pip install -e source/whole_body_tracking
+pip install -e source/whole_body_tracking
 ```
 
 ## Motion Tracking
