@@ -33,7 +33,7 @@ RAID="${RAID:-/raid/$USER}"
 SIF="${SIF:-$RAID/containers/isaaclab_wbt.sif}"
 RUN_DIR="${RUN_DIR:-$RAID/wbt_lowpass}"                 # CWD of the job: logs/ artifacts/ motions/ wandb/ .env
 CACHE="${CACHE:-$RUN_DIR/.isaac-cache}"                 # Isaac Sim / pip / torch caches
-CSV_DIR="${CSV_DIR:-$RAID/CopyCat/lowpass_mocap/output/csv}"   # the 21 low-pass CSVs (30 Hz)
+CSV_DIR="${CSV_DIR:-$RAID/lowpass_csv}"                 # the 21 low-pass CSVs (30 Hz), scp'd here
 ENV_FILE="${ENV_FILE:-$RUN_DIR/.env}"                   # WANDB_API_KEY etc. (chmod 600)
 
 WANDB_ENTITY="${WANDB_ENTITY:?set --export=ALL,WANDB_ENTITY=<your W&B org>}"
