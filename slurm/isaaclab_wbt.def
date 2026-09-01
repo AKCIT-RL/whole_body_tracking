@@ -1,0 +1,70 @@
+# ============================================================================
+#  Apptainer image for BeyondMimic whole_body_tracking (Unitree G1).
+#  Mirrors ../Dockerfile but self-contained: build on the LOGIN NODE, no Docker.
+#
+#  Build (login node, needs internet + an NGC key — see README.md):
+#      export APPTAINER_DOCKER_USERNAME='$oauthtoken'
+#      export APPTAINER_DOCKER_PASSWORD='<NGC-API-key>'
+#      export APPTAINER_TMPDIR=/raid/$USER/tmp/apptainer   # keep scratch off home
+#      apptainer build /raid/$USER/containers/isaaclab_wbt.sif isaaclab_wbt.def
+#
+#  Run this from  train/whole_body_tracking/  (so %files below resolve).
+#  Rebuild the .sif when you change source/ or scripts/.
+# ============================================================================
+Bootstrap: docker
+From: nvcr.io/nvidia/isaac-lab:2.1.0
+
+# %files paths are relative to the dir passed to `apptainer build` (= repo root,
+# handled by build_sif.sh which cd's to ../ before building)
+%files
+    source          /opt/wbt/source
+    scripts         /opt/wbt/scripts
+    pyproject.toml  /opt/wbt/pyproject.toml
+
+%post
+    set -eux
+    PY=/isaac-sim/python.sh
+
+    # --- PyTorch: base image ships cu130 (needs CUDA 13 drivers); L40S host is cu128 ---
+    $PY -m pip install --no-cache-dir \
+        torch==2.11.0+cu128 torchvision==0.26.0+cu128 \
+        --index-url https://download.pytorch.org/whl/cu128
+    $PY -m pip install --no-cache-dir pillow==11.3.0
+
+    # --- patched Isaac Lab fork (v2.3.2 + Isaac Sim 4.5 headless fixes) ---
+    # If this clone fails (private repo / rate limit): add `IsaacLab  /opt/IsaacLab`
+    # to %files (the repo already has a checkout) and delete these two lines.
+    git clone --depth 1 -b whole_body_tracking \
+        https://github.com/AKCIT-RL/IsaacLab.git /opt/IsaacLab
+    for pkg in isaaclab isaaclab_assets isaaclab_tasks isaaclab_mimic isaaclab_rl; do
+        $PY -m pip install --no-cache-dir -e /opt/IsaacLab/source/$pkg --no-deps
+    done
+    $PY -m pip install --no-cache-dir rsl-rl-lib==5.0.1 wandb onnxscript psutil toml
+
+    # --- Unitree G1 robot description (repo ships a HOST symlink that won't resolve) ---
+    ASSETS=/opt/wbt/source/whole_body_tracking/whole_body_tracking/assets
+    rm -rf "$ASSETS/unitree_description" /opt/wbt/source/whole_body_tracking/whole_body_tracking.egg-info
+    curl -L -o /tmp/ud.tar.gz \
+        https://storage.googleapis.com/qiayuanl_robot_descriptions/unitree_description.tar.gz
+    tar -xzf /tmp/ud.tar.gz -C "$ASSETS/"
+    rm /tmp/ud.tar.gz
+
+    # --- install the extension (editable, from the baked copy) ---
+    $PY -m pip install --no-cache-dir -e /opt/wbt/source/whole_body_tracking
+
+    chmod -R a+rX /opt/wbt
+
+%environment
+    export ACCEPT_EULA=Y
+    export PRIVACY_CONSENT=Y
+    export OMNI_KIT_ACCEPT_EULA=YES
+    export ISAACLAB_PATH=/opt/IsaacLab
+    export WBT_DIR=/opt/wbt
+
+%runscript
+    exec /isaac-sim/python.sh "$@"
+
+%labels
+    org whole_body_tracking / CopyCat
+    robot unitree_g1
+    base nvcr.io/nvidia/isaac-lab:2.1.0

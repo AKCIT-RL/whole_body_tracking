@@ -1,0 +1,7 @@
+logs/
+*.sif
+.env
+!.env.example
+
+# guia pessoal com paths/usuário reais — não versionar
+GUIA_OVX.md
